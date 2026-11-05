@@ -97,8 +97,16 @@ function RatingBadge({ review }: { review?: AttachedReview }) {
   if (!review || review.rating === undefined) {
     return <span className="text-xs text-neutral-500">No rating available</span>;
   }
+  const label =
+    review.userRatingsTotal === undefined
+      ? `Rated ${review.rating.toFixed(1)} out of 5 on Google`
+      : `Rated ${review.rating.toFixed(1)} out of 5 on Google from ${review.userRatingsTotal} reviews`;
+
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200">
+    <span
+      aria-label={label}
+      className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200"
+    >
       <span aria-hidden="true">★</span>
       <span className="font-medium">{review.rating.toFixed(1)}</span>
       {review.userRatingsTotal !== undefined && (

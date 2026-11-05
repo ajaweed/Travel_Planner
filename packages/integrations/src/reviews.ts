@@ -120,7 +120,14 @@ async function textSearch(query: string, key: string): Promise<ProviderResult<Pl
       body: JSON.stringify({ textQuery: query, pageSize: 1, languageCode: "en" }),
     });
 
-    if (!res.ok) return mapHttpFailure(res.status, await safeText(res), "Places text search");
+    if (!res.ok) {
+      return mapHttpFailure(
+        res.status,
+        await safeText(res),
+        "Places text search",
+        res.headers.get("Retry-After"),
+      );
+    }
 
     const json = (await res.json()) as { places?: PlaceDto[] };
     const place = json.places?.[0];
@@ -167,7 +174,14 @@ async function placeDetails(
       },
     });
 
-    if (!res.ok) return mapHttpFailure(res.status, await safeText(res), "Places details");
+    if (!res.ok) {
+      return mapHttpFailure(
+        res.status,
+        await safeText(res),
+        "Places details",
+        res.headers.get("Retry-After"),
+      );
+    }
 
     const json = (await res.json()) as PlaceDetailsDto;
     return {
@@ -199,9 +213,20 @@ async function placeDetails(
  * restricted, or Places API not enabled on the project) is a real
  * configuration problem and must not be retried.
  */
-function mapHttpFailure(status: number, body: string, label: string): ProviderResult<never> {
+function mapHttpFailure(
+  status: number,
+  body: string,
+  label: string,
+  retryAfterHeader?: string | null,
+): ProviderResult<never> {
   if (status === 429 || (status === 403 && body.includes("RESOURCE_EXHAUSTED"))) {
-    return { ok: false, reason: "RATE_LIMITED", retryAfterMs: 1000 };
+    // Honour Retry-After when Google sends it, same as tours.ts; 1s otherwise.
+    const seconds = Number(retryAfterHeader ?? "");
+    return {
+      ok: false,
+      reason: "RATE_LIMITED",
+      retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 1000,
+    };
   }
   return {
     ok: false,
