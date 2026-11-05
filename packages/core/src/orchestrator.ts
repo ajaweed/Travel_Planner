@@ -26,7 +26,10 @@ import type {
  * rather than a generic 500 -- each one is a different thing the user needs
  * told (see qa-tester.md on provider/flow failure paths).
  */
-export type OrchestratorErrorCode = "OPTION_NOT_FOUND" | "OPTION_ALREADY_CHOSEN";
+export type OrchestratorErrorCode =
+  | "OPTION_NOT_FOUND"
+  | "OPTION_ALREADY_CHOSEN"
+  | "TRIP_PAST_PLANNING";
 
 export class OrchestratorError extends Error {
   constructor(
@@ -63,6 +66,19 @@ export async function startTrip(userId: string, rawPrompt: string) {
 
 export async function answerClarification(tripId: string, userReply: string) {
   const trip = await prisma.trip.findUniqueOrThrow({ where: { id: tripId } });
+
+  // Only a trip still awaiting its brief can be (re)planned from a
+  // clarification answer. Without this, a stale CLARIFICATION_NEEDED prompt
+  // left on screen could re-run planning on a trip that has already chosen an
+  // option and spent money -- wiping the chosen option and re-offering
+  // options for a trip with live bookings.
+  if (trip.status !== "DRAFT" && trip.status !== "PLANNING") {
+    throw new OrchestratorError(
+      "TRIP_PAST_PLANNING",
+      "This trip is past the planning stage, so it can't be re-planned from a clarification answer.",
+    );
+  }
+
   const result = await runConciergeAgent(userReply, [
     { role: "user", content: trip.rawPrompt },
     { role: "assistant", content: `Partial brief so far: ${trip.briefJson}` },
@@ -114,6 +130,17 @@ async function createTripFromBrief(userId: string, rawPrompt: string, brief: Tri
  */
 export async function generateItineraryOptions(tripId: string): Promise<void> {
   const trip = await prisma.trip.findUniqueOrThrow({ where: { id: tripId } });
+
+  // persistOptions() replaces this trip's options wholesale, so running this
+  // on a trip that already chose one would delete the SELECTED row out from
+  // under a materialized itinerary. Planning stages only.
+  if (trip.status !== "DRAFT" && trip.status !== "PLANNING" && trip.status !== "CHOOSING") {
+    throw new OrchestratorError(
+      "TRIP_PAST_PLANNING",
+      `Trip ${tripId} is ${trip.status}; itinerary options can only be generated before one is chosen.`,
+    );
+  }
+
   const brief: TripBrief = JSON.parse(trip.briefJson);
 
   await prisma.trip.update({ where: { id: tripId }, data: { status: "PLANNING" } });
@@ -359,10 +386,39 @@ async function materializeItinerary(
 /**
  * Sequential on purpose: each booking's budget check depends on the running
  * total committed/pending from everything booked before it.
+ *
+ * Each item is isolated: runBookingAgent returns FAILED for business outcomes,
+ * but an SDK/network throw from the model call would otherwise abort every
+ * remaining booking AND skip finalizeTripStatus, leaving the trip in BOOKING
+ * with items stuck on SEARCHING forever. One item blowing up costs that item.
  */
 async function runBookingPipeline(items: BookableItem[]): Promise<void> {
   for (const item of items) {
-    await processBooking(item);
+    try {
+      await processBooking(item);
+    } catch (err) {
+      console.error(`processBooking failed for booking ${item.bookingId}:`, err);
+      await markBookingCrashed(item, err);
+    }
+  }
+}
+
+async function markBookingCrashed(item: BookableItem, err: unknown): Promise<void> {
+  const reason =
+    err instanceof Error ? `Unexpected error while booking: ${err.message}` : "Unexpected error while booking.";
+  try {
+    const booking = await prisma.booking.update({
+      where: { id: item.bookingId },
+      data: { status: "FAILED", failureReason: reason },
+    });
+    await notify({
+      tripId: booking.tripId,
+      kind: "BOOKING_FAILED",
+      message: `Couldn't book "${item.searchHint}": ${reason}`,
+    });
+  } catch (nested) {
+    // Nothing left to do but log -- the DB itself is refusing writes.
+    console.error(`Could not record the failure for booking ${item.bookingId}:`, nested);
   }
 }
 

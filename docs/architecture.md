@@ -109,7 +109,10 @@ Booking.com's partner terms separately require written approval to use AI at all
 
 ## Known gaps (explicitly out of scope for this pass)
 
-- Real user authentication/sessions.
+- Real user authentication/sessions. Note this got sharper with the options flow:
+  `POST /api/trips/[id]/choose` is the first endpoint that *commits spend*, and like
+  every other route it has no ownership check — anyone with a trip id and an option id
+  can start its bookings. Same pre-auth state as `/api/plan`, bigger blast radius.
 - Cancellation/refund flows in the UI (the `refundPayment` adapter exists; nothing
   calls it yet).
 - Streaming/SSE for trip updates — the dashboard currently polls every 4s.

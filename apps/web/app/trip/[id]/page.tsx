@@ -15,6 +15,9 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const [options, setOptions] = useState<ItineraryOption[] | null>(null);
   const [choosingId, setChoosingId] = useState<string | null>(null);
   const [chooseError, setChooseError] = useState<string | null>(null);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [optionsReload, setOptionsReload] = useState(0);
+  const [alreadyChosen, setAlreadyChosen] = useState(false);
 
   const tripStatus: string | undefined = data?.trip?.status;
 
@@ -55,10 +58,17 @@ export default function TripPage({ params }: { params: { id: string } }) {
         const res = await fetch(`/api/trips/${params.id}/options`);
         if (!res.ok) throw new Error(`Failed to load options: ${res.status}`);
         const json = await res.json();
-        if (!cancelled) setOptions(json.options ?? []);
-      } catch (err) {
         if (!cancelled) {
-          setChooseError(err instanceof Error ? err.message : "Failed to load your options.");
+          setOptions(json.options ?? []);
+          setOptionsError(null);
+        }
+      } catch (err) {
+        // Must be its own state, not chooseError: chooseError only renders
+        // inside <ItineraryOptions>, which isn't mounted while options are
+        // null -- so routing this there left the page on a permanent spinner
+        // with the error invisible and no way to retry.
+        if (!cancelled) {
+          setOptionsError(err instanceof Error ? err.message : "Failed to load your options.");
         }
       }
     })();
@@ -66,7 +76,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
     return () => {
       cancelled = true;
     };
-  }, [params.id, tripStatus]);
+  }, [params.id, tripStatus, optionsReload]);
 
   async function submitAnswer(e: React.FormEvent) {
     e.preventDefault();
@@ -99,17 +109,22 @@ export default function TripPage({ params }: { params: { id: string } }) {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           if (res.status === 409) {
-            setChooseError("A plan has already been chosen for this trip — booking is underway.");
+            // Not an error from the user's point of view -- it's what happened.
+            setAlreadyChosen(true);
           } else {
             setChooseError(body.error ?? `Couldn't start booking: ${res.status}`);
+            setChoosingId(null);
           }
-          setChoosingId(null);
         }
         // On success the trip poll takes over: status is already BOOKING and
         // per-item booking pills appear as the agents work.
-      } catch (err) {
-        setChooseError(err instanceof Error ? err.message : "Couldn't start booking.");
-        setChoosingId(null);
+      } catch {
+        // The request can outlive a proxy timeout while booking carries on
+        // server-side, so this must NOT claim the booking failed. The trip
+        // poll is the source of truth; leave the cards locked.
+        setChooseError(
+          "Still working on this — bookings can take a few minutes. This page updates on its own.",
+        );
       }
     },
     [params.id],
@@ -132,13 +147,19 @@ export default function TripPage({ params }: { params: { id: string } }) {
   }
 
   const { trip, budget } = data;
-  const pendingClarification = trip.notifications.find(
-    (n: any) => n.kind === "CLARIFICATION_NEEDED" && !n.read,
-  );
+  // Gated on status as well as the unread flag: nothing in the app marks
+  // notifications read, so without the status check an answered clarification
+  // prompt stays on screen forever -- and submitting it on a trip that has
+  // already chosen an option is now rejected server-side anyway.
+  const awaitingBrief = trip.status === "DRAFT" || trip.status === "PLANNING";
+  const pendingClarification = awaitingBrief
+    ? trip.notifications.find((n: any) => n.kind === "CLARIFICATION_NEEDED" && !n.read)
+    : undefined;
   const isChoosing = trip.status === "CHOOSING";
   // The gap between claiming a choice and the day rows existing: without this
   // the page would briefly look empty under a "Booking…" pill.
   const settingUp = trip.status === "BOOKING" && trip.itinerary.length === 0;
+  const chosenLabel = options?.find((o) => o.id === choosingId)?.label;
   const planningFailed =
     trip.status === "NEEDS_ATTENTION" && trip.itinerary.length === 0 && !isChoosing;
 
@@ -195,8 +216,35 @@ export default function TripPage({ params }: { params: { id: string } }) {
         </p>
       )}
 
+      {isChoosing && alreadyChosen && (
+        <p className="mt-8 text-sm text-neutral-300">
+          A plan has already been chosen for this trip — booking is underway.
+        </p>
+      )}
+
       {isChoosing &&
-        (options === null ? (
+        !alreadyChosen &&
+        (optionsError !== null ? (
+          <div className="mt-8">
+            <p role="alert" className="text-sm text-amber-300">
+              Couldn&apos;t load your itinerary options: {optionsError}
+            </p>
+            <p className="mt-1 text-sm text-neutral-500">
+              Nothing has been booked. Your options are saved — this is just the page failing
+              to fetch them.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setOptionsError(null);
+                setOptionsReload((n) => n + 1);
+              }}
+              className="mt-3 rounded-lg bg-white px-4 py-2 text-sm font-medium text-neutral-900"
+            >
+              Try again
+            </button>
+          </div>
+        ) : options === null ? (
           <p className="mt-8 text-sm text-neutral-400">Loading your options…</p>
         ) : options.length === 0 ? (
           <p className="mt-8 text-sm text-amber-300">
@@ -214,7 +262,8 @@ export default function TripPage({ params }: { params: { id: string } }) {
 
       {settingUp && (
         <p className="mt-8 text-sm text-neutral-400">
-          Setting up your plan and starting on flights, hotels, and activities…
+          Setting up {chosenLabel ? `“${chosenLabel}”` : "your plan"} and starting on flights,
+          hotels, and activities…
         </p>
       )}
       {trip.status === "BOOKING" && trip.itinerary.length > 0 && (

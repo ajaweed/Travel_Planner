@@ -7,6 +7,7 @@ import { OrchestratorError, selectItineraryOption } from "@trip-planner/core";
 const STATUS_BY_CODE: Record<string, number> = {
   OPTION_NOT_FOUND: 404,
   OPTION_ALREADY_CHOSEN: 409,
+  TRIP_PAST_PLANNING: 409,
 };
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {

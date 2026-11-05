@@ -89,14 +89,23 @@ export type ItineraryDraft = z.infer<typeof ItineraryDraftSchema>;
 export const ItineraryOptionDraftSchema = ItineraryDraftSchema.extend({
   label: z.string(), // short, distinctive name for this option
   summary: z.string(), // one-paragraph pitch: what makes this one different
-  pace: z.enum(["relaxed", "balanced", "packed"]),
+  /**
+   * Display-only badge. Deliberately lenient: an unexpected value (the model
+   * saying "moderate") must not throw away an otherwise-valid multi-day
+   * itinerary, which strict parsing would -- the whole variant gets dropped.
+   */
+  pace: z.enum(["relaxed", "balanced", "packed"]).catch("balanced"),
   /**
    * The model's ESTIMATE of the whole-trip cost, integer minor units in the
    * brief's currency. A planning estimate for comparing options only -- real
    * prices come from provider searches at booking time, which is why the UI
    * labels it as an estimate and the DB column is named estimatedTotalCents.
+   *
+   * Coerced because models hand back "185000" as a string often enough that
+   * failing the parse would cost a whole itinerary over a number we only ever
+   * display. Still forced to an integer so money stays integer minor units.
    */
-  estimatedTotalCents: z.number().int().nonnegative(),
+  estimatedTotalCents: z.coerce.number().int().nonnegative(),
 });
 export type ItineraryOptionDraft = z.infer<typeof ItineraryOptionDraftSchema>;
 
@@ -125,8 +134,12 @@ export type EnrichedItineraryDayDraft = Omit<ItineraryDayDraft, "activities"> & 
  * see the honesty rule in ux-designer.md.
  */
 export type ReviewLookupStatus =
-  | { status: "OK"; lookedUp: number; matched: number }
+  /** We looked. `named` can exceed `lookedUp` when the per-generation cap bit. */
+  | { status: "OK"; named: number; lookedUp: number; matched: number; failed: number }
+  /** No key, or a key the provider rejected -- we never actually looked. */
   | { status: "NOT_CONFIGURED"; message: string }
+  /** Configured, but every lookup errored (quota, outage). Not "found nothing". */
+  | { status: "UNAVAILABLE"; message: string }
   | { status: "NO_CANDIDATES" };
 
 /** Exactly what gets serialized into ItineraryOption.draftJson. */

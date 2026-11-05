@@ -202,3 +202,37 @@ render) and by 19 fixture/mock tests.
 - The trip dashboard is now `max-w-5xl` and renders options only while
   `status === "CHOOSING"`; the persistent "revise this trip" surface should sit
   outside that branch so it's visible in every state, per `ux-designer.md`.
+
+**2026-11-05 -- qa-tester** -- Addendum: the `/code-review` background pass
+*did* eventually return, shortly after the merge above. It independently
+confirmed both bugs I'd already found and fixed (the stranded CHOOSING claim
+and the non-atomic option marking) and raised 10 more. All fixed on
+`qa-tester/options-review-fixes` and merged; `npm run typecheck`, `npm test`
+(24 tests now), and `npm run build -w apps/web` pass, and the whole flow was
+re-run live on a fresh Rome trip afterwards.
+
+Worth recording because it's the pattern, not the individual bugs: **every
+HIGH/MEDIUM finding was a state the happy path never visits.** The options
+fetch failing (error written to a state that only renders inside the component
+that isn't mounted yet). A clarification prompt answered after booking (nothing
+in this app ever marks a notification read, so that prompt never goes away on
+its own). The ratings provider configured but rate-limited, which my own code
+reported as "matched 0 of 4" -- i.e. the code whose header insists on
+distinguishing "we never looked" from "we looked and found nothing" was itself
+blurring them. None of those show up in a live run with no keys and a working
+model, which is exactly why the gate isn't optional.
+
+One finding I deliberately did not "fix": `POST /api/trips/[id]/choose` has no
+ownership check. It's the first endpoint in the repo that commits spend, so the
+blast radius of the known pre-auth state is now larger -- but inventing
+half-auth on this branch would be worse than the documented gap. Recorded in
+`docs/architecture.md`'s known gaps; it belongs with the real auth work.
+
+Also of note for `backend-dev`: I had to make `pace` and `estimatedTotalCents`
+lenient (`.catch()` / `z.coerce`) because strict parsing threw away an entire
+valid multi-day itinerary when the model wrote `"moderate"` or `"185000"` for a
+field we only ever render on a badge. Strictness should match what a field is
+load-bearing for -- `searchHint` and `kind` stay strict because they decide what
+gets booked. The tool-input repair list stays `["days"]` on purpose: pushing
+`label` through `JSON.parse` would turn a numeric-looking label like "2024" into
+a number and fail validation that would otherwise have passed.
