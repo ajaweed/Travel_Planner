@@ -1,0 +1,158 @@
+// Trip Planner AI — shared domain model.
+// SQLite for local dev; point DATABASE_URL at Postgres for staging/prod
+// (switch provider to "postgresql" when you do — schema below is compatible).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum TripStatus {
+  DRAFT // concierge still gathering requirements
+  PLANNING // itinerary agent building the plan
+  BOOKING // booking agent working through bookable items
+  CONFIRMED // all required bookings confirmed
+  NEEDS_ATTENTION // a booking failed or budget was breached
+  CANCELLED
+  COMPLETED
+}
+
+enum BookingKind {
+  FLIGHT
+  HOTEL
+  TOUR
+  RESERVATION // restaurant / misc reservation
+}
+
+enum BookingStatus {
+  SEARCHING
+  OPTIONS_FOUND
+  AWAITING_CONFIRMATION // price/availability confirmed, awaiting payment
+  BOOKED
+  FAILED
+  CANCELLED
+}
+
+enum NotificationKind {
+  ITINERARY_READY
+  BOOKING_CONFIRMED
+  BOOKING_FAILED
+  BUDGET_ALERT
+  CLARIFICATION_NEEDED
+  GENERAL
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+
+  trips Trip[]
+}
+
+model Trip {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id])
+  status    TripStatus @default(DRAFT)
+  title     String? // e.g. "Relaxed week in Lisbon"
+
+  // Raw input + structured brief the ConciergeAgent extracted from it.
+  rawPrompt    String
+  briefJson    String // TripBrief, serialized (see packages/core/src/agents/types.ts)
+
+  // Budget, always integer minor units (cents) + ISO currency code.
+  budgetTotalCents  Int
+  budgetSpentCents  Int      @default(0)
+  currency          String   @default("USD")
+
+  startDate DateTime?
+  endDate   DateTime?
+
+  itinerary     ItineraryDay[]
+  bookings      Booking[]
+  budgetEntries BudgetEntry[]
+  notifications Notification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ItineraryDay {
+  id      String @id @default(cuid())
+  tripId  String
+  trip    Trip   @relation(fields: [tripId], references: [id])
+  dayIndex Int   // 0-based day number within the trip
+  date    DateTime?
+  summary String?
+
+  activities Activity[]
+
+  @@unique([tripId, dayIndex])
+}
+
+model Activity {
+  id             String       @id @default(cuid())
+  itineraryDayId String
+  itineraryDay   ItineraryDay @relation(fields: [itineraryDayId], references: [id])
+  order          Int
+  title          String
+  description    String?
+  startTime      String? // "HH:mm", local to destination
+  endTime        String?
+
+  // If this activity is bookable (flight/hotel/tour), it links to a Booking.
+  bookingId String?  @unique
+  booking   Booking? @relation(fields: [bookingId], references: [id])
+}
+
+model Booking {
+  id            String        @id @default(cuid())
+  tripId        String
+  trip          Trip          @relation(fields: [tripId], references: [id])
+  kind          BookingKind
+  status        BookingStatus @default(SEARCHING)
+
+  provider      String // e.g. "amadeus", "viator", "expedia_rapid"
+  providerRef   String? // provider's own booking/order id once BOOKED
+  idempotencyKey String  @unique
+
+  // Snapshot of what was searched for and what was ultimately selected/booked.
+  searchParamsJson String
+  selectedOfferJson String?
+
+  priceCents Int?
+  currency   String?
+  failureReason String?
+
+  activity Activity?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model BudgetEntry {
+  id        String   @id @default(cuid())
+  tripId    String
+  trip      Trip     @relation(fields: [tripId], references: [id])
+  label     String
+  amountCents Int // positive = spend, negative = refund/credit
+  currency  String
+  bookingId String?
+  createdAt DateTime @default(now())
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  tripId    String
+  trip      Trip             @relation(fields: [tripId], references: [id])
+  kind      NotificationKind
+  message   String
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+}
