@@ -31,7 +31,7 @@ function textResponse(body: string, status: number): Response {
 
 /** Routes by URL so each test states only the responses it cares about. */
 function mockFetch(handlers: { search?: Response; details?: Response }) {
-  const fetchMock = vi.fn(async (input: string | URL | Request) => {
+  const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     if (url.includes(":searchText")) {
       if (!handlers.search) throw new Error("unexpected search call");
