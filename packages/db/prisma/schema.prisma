@@ -11,40 +11,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum TripStatus {
-  DRAFT // concierge still gathering requirements
-  PLANNING // itinerary agent building the plan
-  BOOKING // booking agent working through bookable items
-  CONFIRMED // all required bookings confirmed
-  NEEDS_ATTENTION // a booking failed or budget was breached
-  CANCELLED
-  COMPLETED
-}
-
-enum BookingKind {
-  FLIGHT
-  HOTEL
-  TOUR
-  RESERVATION // restaurant / misc reservation
-}
-
-enum BookingStatus {
-  SEARCHING
-  OPTIONS_FOUND
-  AWAITING_CONFIRMATION // price/availability confirmed, awaiting payment
-  BOOKED
-  FAILED
-  CANCELLED
-}
-
-enum NotificationKind {
-  ITINERARY_READY
-  BOOKING_CONFIRMED
-  BOOKING_FAILED
-  BUDGET_ALERT
-  CLARIFICATION_NEEDED
-  GENERAL
-}
+// NOTE: these would be `enum`s, but Prisma's sqlite connector (used for local
+// dev) doesn't support native enums. Modeled as String here; the real enums
+// live as TS string-literal union types in packages/db/src/enums.ts and are
+// used everywhere in application code for type safety. Switching `provider`
+// above to "postgresql" for staging/prod lets you promote these back to real
+// `enum` blocks if you want DB-level enforcement too.
+//
+// TripStatus:   DRAFT | PLANNING | BOOKING | CONFIRMED | NEEDS_ATTENTION | CANCELLED | COMPLETED
+// BookingKind:  FLIGHT | HOTEL | TOUR | RESERVATION
+// BookingStatus: SEARCHING | OPTIONS_FOUND | AWAITING_CONFIRMATION | BOOKED | FAILED | CANCELLED
+// NotificationKind: ITINERARY_READY | BOOKING_CONFIRMED | BOOKING_FAILED | BUDGET_ALERT | CLARIFICATION_NEEDED | GENERAL
 
 model User {
   id        String   @id @default(cuid())
@@ -59,7 +36,7 @@ model Trip {
   id        String     @id @default(cuid())
   userId    String
   user      User       @relation(fields: [userId], references: [id])
-  status    TripStatus @default(DRAFT)
+  status    String     @default("DRAFT")
   title     String? // e.g. "Relaxed week in Lisbon"
 
   // Raw input + structured brief the ConciergeAgent extracted from it.
@@ -115,8 +92,8 @@ model Booking {
   id            String        @id @default(cuid())
   tripId        String
   trip          Trip          @relation(fields: [tripId], references: [id])
-  kind          BookingKind
-  status        BookingStatus @default(SEARCHING)
+  kind          String
+  status        String        @default("SEARCHING")
 
   provider      String // e.g. "amadeus", "viator", "expedia_rapid"
   providerRef   String? // provider's own booking/order id once BOOKED
@@ -151,7 +128,7 @@ model Notification {
   id        String           @id @default(cuid())
   tripId    String
   trip      Trip             @relation(fields: [tripId], references: [id])
-  kind      NotificationKind
+  kind      String
   message   String
   read      Boolean          @default(false)
   createdAt DateTime         @default(now())

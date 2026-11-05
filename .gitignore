@@ -11,3 +11,4 @@ packages/db/prisma/dev.db
 packages/db/prisma/dev.db-journal
 .turbo/
 coverage/
+*.tsbuildinfo
