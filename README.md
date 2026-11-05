@@ -1,9 +1,10 @@
 # Trip Planner AI
 
 Tell it what kind of trip you want — specific or "I don't know, surprise me" — and a
-pipeline of backend AI agents turns that into a day-by-day itinerary, searches and books
-flights/hotels/tours against real provider APIs, tracks it all against your budget, and
-raises in-app notifications as things happen.
+pipeline of backend AI agents turns that into a few genuinely different day-by-day
+itineraries to choose between, then searches and books flights/hotels/tours against real
+provider APIs for the one you pick, tracks it all against your budget, and raises in-app
+notifications as things happen.
 
 See `docs/architecture.md` for the full flow diagram, package boundaries, and a decisions
 log of which provider was picked for what and why.
@@ -14,6 +15,11 @@ This is a working scaffold, not a finished, live-bookable product:
 
 - The agent pipeline (Concierge → Itinerary → Booking → Budget → Notification) is fully
   wired and runs real tool-use loops against Claude.
+- Planning is two-stage: you get 2-3 itinerary options (value / balanced / elevated) with
+  estimated costs to compare, and nothing is booked until you choose one. Where an option
+  names a specific hotel or tour, its **real** Google rating and review count are shown —
+  and where they can't be looked up, it says "no rating available" rather than inventing
+  a number.
 - Flight/hotel/tour/payment adapters are written against real provider APIs
   (Amadeus, Viator, Stripe) and run in **sandbox/test mode only**. Flipping any of them
   to production requires completing that provider's business approval process first —
@@ -49,8 +55,9 @@ plan and (attempt to) book it.
 
 ## Going to production (per provider)
 
-Sandbox credentials are self-serve for all four providers; **production credentials are
-not** — each requires a business-side approval step first. `.env.example` documents the
+Sandbox credentials are self-serve for all four *booking/payment* providers;
+**production credentials are not** — each requires a business-side approval step first.
+(Google Places, used only for read-only ratings, is the exception: see the last row.) `.env.example` documents the
 exact env vars; `docs/architecture.md` has the full table. Short version:
 
 | Provider | What's needed before `*_ENV=production` / `live` will actually work |
@@ -59,6 +66,7 @@ exact env vars; `docs/architecture.md` has the full table. Short version:
 | Hotel provider | Signed partner/affiliate agreement (Amadeus Hotel Booking / Expedia Rapid / Booking.com Demand — pick one) |
 | Viator (tours) | Partner approval + integration review for production booking |
 | Stripe (payments) | Business/identity verification ("Activate your account") |
+| Google Places (ratings) | Nothing to approve — just a Google Cloud API key with "Places API (New)" enabled and billing on. Read-only, never books anything. Billed per request, so set a quota cap. |
 
 The adapters in `packages/integrations` will actively refuse to run in production mode
 until you've done this — that's deliberate, not a bug to work around. For the
