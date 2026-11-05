@@ -5,6 +5,7 @@
 export type TripStatus =
   | "DRAFT"
   | "PLANNING"
+  | "CHOOSING" // itinerary options generated; waiting on the user to pick one
   | "BOOKING"
   | "CONFIRMED"
   | "NEEDS_ATTENTION"
@@ -28,3 +29,5 @@ export type NotificationKind =
   | "BUDGET_ALERT"
   | "CLARIFICATION_NEEDED"
   | "GENERAL";
+
+export type ItineraryOptionStatus = "PROPOSED" | "SELECTED" | "DISCARDED";
