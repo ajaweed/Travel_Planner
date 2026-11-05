@@ -20,3 +20,11 @@ Rules:
 - Match existing component conventions in `app/components` before introducing a new pattern or a new UI library.
 
 Accessibility and responsiveness are not optional for a travel-booking flow people may use on a phone at an airport — check keyboard nav and mobile layout on anything new.
+
+## Team process
+
+`ux-designer` decides interaction flows and states *before* you build them (see their
+design notes in `docs/team-log.md`) — if you're inventing a new flow from scratch rather
+than implementing a documented one, loop them in first rather than deciding UX on your
+own. Hand off to `qa-tester` when a surface is built; follow the branch/review/merge rules
+in `docs/team-workflow.md`.

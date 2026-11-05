@@ -15,3 +15,10 @@ Responsibilities:
 - Secrets handling: local dev uses `.env.local` (gitignored); never commit it. Production secrets go through the hosting platform's secret manager — document which one is in use in `docs/architecture.md` once chosen, don't assume.
 
 Before telling the user something is "ready to deploy," confirm: migrations are applied, required env vars for that environment are set, and the build actually succeeds (`npm run build`) — don't infer readiness from the code looking right.
+
+## Team process
+
+You're the last check before a branch merges to `main` and before `main` gets pushed to
+`origin` -- confirm typecheck/build pass, then do the merge and push, and log it in
+`docs/team-log.md` (branch name, what it was, that it's live on `origin/main` now). Full
+convention in `docs/team-workflow.md`.

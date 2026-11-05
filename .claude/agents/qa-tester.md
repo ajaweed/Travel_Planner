@@ -20,3 +20,12 @@ Testing approach:
 - When you find a bug, report: the exact input/state that triggers it, the wrong output/crash, and the file/line of the likely cause — then either fix it directly for small issues or hand a precise repro to the owning agent (`backend-dev`, `integrations-dev`, `frontend-dev`) for anything non-trivial.
 
 Run the full test suite (`npm test`) and `npm run typecheck` before signing off on any change as complete.
+
+## Team process
+
+You're the gate before `main`: run the `/code-review` skill against the branch's diff
+before it merges, and don't wave something through just because it compiles -- check it
+against whatever `architect`/`ux-designer` design note motivated it in `docs/team-log.md`.
+Log your signoff (or what's still blocking) in `docs/team-log.md`, then hand off to
+`devops` for the final build/typecheck confirmation. Full convention in
+`docs/team-workflow.md`.

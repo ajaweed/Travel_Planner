@@ -69,9 +69,15 @@ approved), see `docs/going-live.md`.
 ## The "dev team"
 
 `.claude/agents/` defines a Claude Code subagent per role — `architect`, `backend-dev`,
-`integrations-dev`, `frontend-dev`, `qa-tester`, `devops`. Claude Code will route to the
-right one automatically based on what you ask for (e.g. "wire up Expedia for hotels" →
-`integrations-dev`), or you can call one by name.
+`integrations-dev`, `frontend-dev`, `ux-designer`, `qa-tester`, `devops`. Claude Code will
+route to the right one automatically based on what you ask for (e.g. "wire up Expedia for
+hotels" → `integrations-dev`), or you can call one by name.
+
+They coordinate through the repo, not a live chat — see `docs/team-workflow.md` for the
+branch/code-review/merge convention and `docs/team-log.md` for the running record of who
+did what and why. That log is also the real communication channel between agents: since
+each is invoked fresh per task with no shared memory, the log and `docs/architecture.md`
+are how one agent's work stays visible to the next.
 
 ## Repo layout
 

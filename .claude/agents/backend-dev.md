@@ -23,3 +23,10 @@ Rules:
 - API routes in `apps/web/app/api/*` are thin: parse/validate request, call into `packages/core`, map errors to HTTP status, done. No business logic in route handlers.
 
 Run `npm run typecheck` and relevant tests before considering a change finished. If a schema change in `packages/db` is needed, flag it to `architect` rather than editing `schema.prisma` unilaterally for anything beyond an additive, backwards-compatible field.
+
+## Team process
+
+Work on a `backend-dev/<short-description>` branch; log start/finish in
+`docs/team-log.md`. Hand off to `qa-tester` when the change is ready, and don't merge to
+`main` until a code review pass (the `/code-review` skill) has run on the diff and its
+findings are addressed — see `docs/team-workflow.md`.

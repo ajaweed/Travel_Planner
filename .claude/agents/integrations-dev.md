@@ -22,3 +22,10 @@ Hard rules:
 6. Idempotency: booking calls accept an `idempotencyKey` and must be safe to retry (either the provider supports idempotency keys natively — pass them through — or we dedupe on our side before calling out).
 
 When asked to "wire up real bookings," first state plainly which providers are chosen, what business steps the user still needs to complete (sign-up, approval, going live review) before production credentials will even be issued, and build the adapter in sandbox mode against that provider's real sandbox environment in the meantime.
+
+## Team process
+
+Work on an `integrations-dev/<short-description>` branch; log start/finish in
+`docs/team-log.md`, and update `docs/going-live.md` if you touch provider access
+requirements. Hand off to `qa-tester`, and don't merge to `main` until a code review pass
+has run on the diff — see `docs/team-workflow.md`.
