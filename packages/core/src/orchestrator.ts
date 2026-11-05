@@ -248,24 +248,14 @@ export async function selectItineraryOption(tripId: string, optionId: string): P
 
   let bookableItems: BookableItem[];
   try {
-    bookableItems = await materializeItinerary(tripId, brief, draft.days);
-
-    await prisma.$transaction([
-      prisma.itineraryOption.update({
-        where: { id: optionId },
-        data: { status: "SELECTED" },
-      }),
-      prisma.itineraryOption.updateMany({
-        where: { tripId, id: { not: optionId } },
-        data: { status: "DISCARDED" },
-      }),
-    ]);
+    bookableItems = await materializeItinerary(tripId, optionId, brief, draft.days);
   } catch (err) {
     // We already claimed the trip by flipping it to BOOKING. If writing the
     // plan failed, release the claim so the user gets their options back
-    // instead of a trip stuck in BOOKING with no itinerary forever. Safe to
-    // retry: materializeItinerary is a single transaction, so nothing partial
-    // was persisted.
+    // instead of a trip stuck in BOOKING with no itinerary forever. Safe
+    // precisely because materializeItinerary is one transaction: either the
+    // whole plan landed or none of it did, so a retry can't collide with
+    // half-written days.
     await prisma.trip.update({ where: { id: tripId }, data: { status: "CHOOSING" } });
     throw err;
   }
@@ -281,19 +271,34 @@ export async function selectItineraryOption(tripId: string, optionId: string): P
 }
 
 /**
- * Writes a chosen plan's days/activities/bookings. This is the persistence
- * half of what used to be planTrip(), unchanged in behaviour -- bookings are
- * created in SEARCHING with a pending idempotency key and handed to the
- * booking loop as BookableItems.
+ * Writes a chosen plan's days/activities/bookings, and marks which option won,
+ * all in ONE transaction. This is the persistence half of what used to be
+ * planTrip(), unchanged in behaviour -- bookings are created in SEARCHING with
+ * a pending idempotency key and handed to the booking loop as BookableItems.
+ *
+ * The option-status writes belong inside this transaction rather than after
+ * it: a trip whose days exist but whose option still reads PROPOSED (or vice
+ * versa) is a state nothing else in the system knows how to recover from, and
+ * the unique (tripId, dayIndex) index means a naive retry would fail forever.
  */
 async function materializeItinerary(
   tripId: string,
+  selectedOptionId: string,
   brief: TripBrief,
   days: EnrichedItineraryDayDraft[],
 ): Promise<BookableItem[]> {
   const bookableItems: BookableItem[] = [];
 
   await prisma.$transaction(async (tx) => {
+    await tx.itineraryOption.update({
+      where: { id: selectedOptionId },
+      data: { status: "SELECTED" },
+    });
+    await tx.itineraryOption.updateMany({
+      where: { tripId, id: { not: selectedOptionId } },
+      data: { status: "DISCARDED" },
+    });
+
     for (const day of days) {
       const itineraryDay = await tx.itineraryDay.create({
         data: {
