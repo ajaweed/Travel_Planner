@@ -118,3 +118,87 @@ already been chosen for this trip -- booking is underway." rather than an
 error, because that's what actually happened.
 
 Handoff: `frontend-dev`.
+
+**2026-11-05 -- qa-tester** -- Review gate on
+`integrations-dev/itinerary-options-and-reviews`. Note on process: the
+`/code-review` skill was invoked as the workflow requires, but its background
+pass produced no findings after ~65 minutes and didn't answer a status ping, so
+the gate was completed as the "equivalent review pass" the workflow allows
+(`docs/team-workflow.md` item 3), structured against the qa-tester checklist.
+Four real issues found and fixed on the branch:
+
+1. **Stranded trip on a materialization failure** (`orchestrator.ts`). Any
+   throw after the `CHOOSING -> BOOKING` claim left the trip in `BOOKING` with
+   no itinerary, no options on screen, and no way back. Now releases the claim.
+2. **Non-atomic option marking** (`orchestrator.ts`) -- the worse half of the
+   same area. The `SELECTED`/`DISCARDED` writes sat outside
+   `materializeItinerary`'s transaction but inside the revert's `try`. Had they
+   failed after the days/bookings landed, the revert would have left real
+   itinerary rows behind, and the unique `(tripId, dayIndex)` index would then
+   make *every* retry fail permanently. Folded into the one transaction.
+3. **Rate-limit hint ignored** (`reviews.ts`) -- mapped every 429/quota 403 to a
+   flat 1s `retryAfterMs`, where `tours.ts` already reads `Retry-After`. Now
+   consistent.
+4. **Rating badge unlabelled** (`ItineraryOptions.tsx`) -- announced as a bare
+   "4.6 · 1,843 reviews" with no indication it was a rating or whose. Added an
+   `aria-label`.
+
+Money/idempotency/ordering checks: estimates are integer cents end to end
+(live-verified 205000 == $2,050, model got minor units right); option currency
+comes from the trip, not the model, so an option can't disagree with the budget's
+currency; the budget-before-booking ordering in `processBooking` is untouched;
+`BookingAgent` and the booking tools are untouched by this branch entirely.
+
+**2026-11-05 -- integrations-dev / devops** -- FINISHED and merged
+`integrations-dev/itinerary-options-and-reviews` to `main`, pushed to `origin`.
+`npm run typecheck`, `npm run build -w apps/web`, and `npm test` (19 tests --
+the repo had none before this branch) all pass.
+
+Live-tested against real Claude calls, three trips end to end:
+- Lisbon $3,000 -> 3 options at $2,050 / $2,550 / $2,920 (68% / 85% / 97% of
+  budget), real named hotels (Memmo Alfama, Convento do Salvador, Bairro Alto).
+- Mexico City $1,800 -> $1,220 / $1,550 / $1,760, and the same hotel named by
+  two options, which the de-dupe collapses to one billable lookup.
+- "Surprise me, somewhere warm" -> clarification -> answer -> options, which
+  also covers the `answerClarification` path, and produced real destination
+  variety (Cancún vs Puerto Vallarta) plus the first TOUR candidate names.
+Choosing an option materialized 5 days / 4-5 bookings, all of which failed as
+`NOT_CONFIGURED` (correct -- no provider keys set). A second "choose" fired
+concurrently with the first returned **409** and created no duplicate rows
+(verified: 5 days, 5 bookings, exactly 1 SELECTED + 2 DISCARDED). Bogus option
+id -> 404, missing field -> 400. Google Places is unconfigured here, so every
+option stored `reviewLookup: NOT_CONFIGURED` and **no** rating was attached
+anywhere -- the UI renders the words "No rating available" plus an explanation
+of whose gap it is. The configured path was verified by rendering the component
+against a payload with real-shaped review data (badge + verbatim excerpt
+render) and by 19 fixture/mock tests.
+
+**What the revision-prompt branch needs to know before it starts:**
+- **`planTrip()` no longer exists.** It's split into
+  `generateItineraryOptions(tripId)` and
+  `selectItineraryOption(tripId, optionId)`. The reusable internals are
+  `materializeItinerary(tripId, optionId, brief, days)` (one transaction:
+  days + activities + bookings + option status) and
+  `runBookingPipeline(items)` -> `finalizeTripStatus(tripId)`. Re-plan a trip
+  by composing those, don't re-implement persistence.
+- **New Trip status `CHOOSING`** between `PLANNING` and `BOOKING`
+  (`packages/db/src/enums.ts`), plus `ItineraryOptionStatus`
+  (`PROPOSED | SELECTED | DISCARDED`). Any revision flow that re-opens planning
+  on an already-booked trip has to decide what it does with existing
+  `Booking` rows *before* it sends the trip back to `CHOOSING` -- this branch
+  deliberately doesn't touch that.
+- **`persistOptions()` calls `deleteMany` on the trip's options** before writing
+  a new set (the `(tripId, optionIndex)` unique index requires it). It is only
+  ever called pre-choice today. If the revision flow calls
+  `generateItineraryOptions` on a trip that already has a SELECTED option and a
+  materialized itinerary, that delete will drop the chosen option while its
+  itinerary rows survive -- guard it there.
+- **`OrchestratorError`** (`code: OPTION_NOT_FOUND | OPTION_ALREADY_CHOSEN`) is
+  the pattern for flow failures that need a specific HTTP status; extend it
+  rather than throwing bare `Error`s.
+- **`reviews.ts` is read-only and must stay out of BookingAgent.** It's also the
+  one adapter with no sandbox mode (Google publishes none) -- fine while it
+  can't spend money, not fine if that ever changes.
+- The trip dashboard is now `max-w-5xl` and renders options only while
+  `status === "CHOOSING"`; the persistent "revise this trip" surface should sit
+  outside that branch so it's visible in every state, per `ux-designer.md`.
