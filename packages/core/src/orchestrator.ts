@@ -246,18 +246,29 @@ export async function selectItineraryOption(tripId: string, optionId: string): P
   const brief: TripBrief = JSON.parse(trip.briefJson);
   const draft = JSON.parse(option.draftJson) as StoredItineraryOption;
 
-  const bookableItems = await materializeItinerary(tripId, brief, draft.days);
+  let bookableItems: BookableItem[];
+  try {
+    bookableItems = await materializeItinerary(tripId, brief, draft.days);
 
-  await prisma.$transaction([
-    prisma.itineraryOption.update({
-      where: { id: optionId },
-      data: { status: "SELECTED" },
-    }),
-    prisma.itineraryOption.updateMany({
-      where: { tripId, id: { not: optionId } },
-      data: { status: "DISCARDED" },
-    }),
-  ]);
+    await prisma.$transaction([
+      prisma.itineraryOption.update({
+        where: { id: optionId },
+        data: { status: "SELECTED" },
+      }),
+      prisma.itineraryOption.updateMany({
+        where: { tripId, id: { not: optionId } },
+        data: { status: "DISCARDED" },
+      }),
+    ]);
+  } catch (err) {
+    // We already claimed the trip by flipping it to BOOKING. If writing the
+    // plan failed, release the claim so the user gets their options back
+    // instead of a trip stuck in BOOKING with no itinerary forever. Safe to
+    // retry: materializeItinerary is a single transaction, so nothing partial
+    // was persisted.
+    await prisma.trip.update({ where: { id: tripId }, data: { status: "CHOOSING" } });
+    throw err;
+  }
 
   await notify({
     tripId,
