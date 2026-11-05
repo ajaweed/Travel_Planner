@@ -61,7 +61,10 @@ exact env vars; `docs/architecture.md` has the full table. Short version:
 | Stripe (payments) | Business/identity verification ("Activate your account") |
 
 The adapters in `packages/integrations` will actively refuse to run in production mode
-until you've done this — that's deliberate, not a bug to work around.
+until you've done this — that's deliberate, not a bug to work around. For the
+researched specifics per provider (real application URLs, concrete requirements,
+costs, realistic timelines, and whether a solo developer can realistically get
+approved), see `docs/going-live.md`.
 
 ## The "dev team"
 

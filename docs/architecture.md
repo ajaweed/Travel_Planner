@@ -81,6 +81,16 @@ refuses to run in production mode until that's done:
 - **Stripe (payments)**: requires completing business/identity verification
   ("Activate your account") before live secret keys will process real charges.
 
+See `docs/going-live.md` for the researched specifics per provider — real application
+URLs, concrete requirements, costs, realistic timelines (and where none is published),
+and whether a solo/independent developer can realistically get approved for each. Short
+version of that research's bottom line: Stripe and Viator's lower access tiers are
+realistically solo-developer-obtainable; Amadeus flight *ticketing* effectively
+requires a consolidator/IATA-ARC relationship; and of the three hotel options, Expedia
+Rapid API is the most realistically obtainable for an independent developer (Amadeus's
+enterprise sales motion and Booking.com's Managed-Affiliate gate are both harder, and
+Booking.com's partner terms separately require written approval to use AI at all).
+
 ## Known gaps (explicitly out of scope for this pass)
 
 - Real user authentication/sessions.
