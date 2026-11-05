@@ -47,7 +47,9 @@ export const ActivityDraftSchema = z.object({
   endTime: z.string().optional(),
   bookable: z
     .object({
-      kind: z.enum(["FLIGHT", "HOTEL", "TOUR", "RESERVATION"]),
+      // RESERVATION deliberately excluded: no reservation provider is wired up yet
+      // (see architect.md's rule against orphaned tool-use capability claims).
+      kind: z.enum(["FLIGHT", "HOTEL", "TOUR"]),
       searchHint: z.string(), // e.g. "flight LIS->OPO morning of day 3"
     })
     .optional(),

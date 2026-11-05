@@ -4,6 +4,7 @@
 
 import type { Tool } from "@anthropic-ai/sdk/resources/messages";
 import { AGENT_MODEL, getClaudeClient } from "../claudeClient";
+import { coerceStringifiedFields } from "./toolInputRepair";
 import { ItineraryDraftSchema, type ItineraryDraft, type TripBrief } from "./types";
 
 const tools: Tool[] = [
@@ -32,8 +33,10 @@ const tools: Tool[] = [
                     endTime: { type: "string" },
                     bookable: {
                       type: "object",
+                      description:
+                        "Omit entirely for non-bookable narrative activities (meals, walking, free time) -- there is no reservation provider, so RESERVATION is not a valid kind here.",
                       properties: {
-                        kind: { type: "string", enum: ["FLIGHT", "HOTEL", "TOUR", "RESERVATION"] },
+                        kind: { type: "string", enum: ["FLIGHT", "HOTEL", "TOUR"] },
                         searchHint: { type: "string" },
                       },
                     },
@@ -58,13 +61,24 @@ day-by-day itinerary.
 Rules:
 - Match the requested pace: "relaxed" means 2-3 activities/day with real downtime,
   "packed" means a full day scheduled start to finish.
-- Every day needs exactly one HOTEL bookable activity implied by the stay (don't repeat a
-  hotel search per day; put it on day 0 as check-in and the last day as check-out) and, if
-  needsFlights is true, a FLIGHT bookable activity on day 0 (arrival) and the final day
-  (departure).
-- Tours/reservations are bookable: { kind: "TOUR" | "RESERVATION", searchHint }. Give enough
-  detail in searchHint for a search agent with no other context to find the right thing
-  (destination, rough date, what kind of activity).
+- There is exactly ONE bookable HOTEL activity for the whole stay, on day 0 ("Check in to
+  <hotel>"), covering checkIn=day 0's date through checkOut=the final day's date. The final
+  day's "check out" activity is plain narrative (no bookable field) -- it is NOT a second
+  hotel booking.
+- If needsFlights is true: a bookable FLIGHT activity on day 0 (arrival) and another on the
+  final day (departure). Each flight's searchHint MUST include the actual origin and
+  destination (use brief.originCity -- never "traveler's home city" or similar placeholder
+  text) and the actual departure date in YYYY-MM-DD (computed from brief.startDate + the
+  day's offset -- never a placeholder like "Day 1").
+- Tours are bookable: { kind: "TOUR", searchHint }, with a concrete YYYY-MM-DD date in the
+  hint (from brief.startDate + day offset) and enough detail for a search agent with no
+  other context to find the right thing.
+- Restaurant/dining reservations are NOT bookable -- there is no reservation provider wired
+  up yet (see architect.md). Write them as plain narrative activities with no 'bookable'
+  field at all; do not set kind: "RESERVATION".
+- Every ItineraryDay's 'date' field must be a real YYYY-MM-DD computed from brief.startDate +
+  dayIndex. If brief.startDate is missing/not a real date, leave 'date' unset entirely --
+  never put a placeholder like "Day 1" in a date field.
 - Respect mustInclude and mustAvoid literally. Respect budget directionally -- don't plan an
   itinerary implying obviously-unaffordable choices (e.g. 5-star hotels on a shoestring
   budget) -- but exact pricing is BookingAgent's job, not yours.
@@ -87,8 +101,13 @@ export async function runItineraryAgent(brief: TripBrief): Promise<ItineraryDraf
     throw new Error("ItineraryAgent did not produce a tool call.");
   }
 
-  const parsed = ItineraryDraftSchema.safeParse(toolUse.input);
+  const rawInput = toolUse.input as Record<string, unknown>;
+  let parsed = ItineraryDraftSchema.safeParse(rawInput);
   if (!parsed.success) {
+    parsed = ItineraryDraftSchema.safeParse(coerceStringifiedFields(rawInput, ["days"]));
+  }
+  if (!parsed.success) {
+    console.error("ItineraryAgent raw tool_use.input:", JSON.stringify(rawInput));
     throw new Error(`ItineraryAgent produced an invalid itinerary: ${parsed.error.message}`);
   }
   return parsed.data;
