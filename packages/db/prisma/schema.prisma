@@ -18,10 +18,12 @@ datasource db {
 // above to "postgresql" for staging/prod lets you promote these back to real
 // `enum` blocks if you want DB-level enforcement too.
 //
-// TripStatus:   DRAFT | PLANNING | BOOKING | CONFIRMED | NEEDS_ATTENTION | CANCELLED | COMPLETED
+// TripStatus:   DRAFT | PLANNING | CHOOSING | BOOKING | CONFIRMED | NEEDS_ATTENTION | CANCELLED | COMPLETED
+//               (CHOOSING = itinerary options generated, waiting on the user to pick one)
 // BookingKind:  FLIGHT | HOTEL | TOUR | RESERVATION
 // BookingStatus: SEARCHING | OPTIONS_FOUND | AWAITING_CONFIRMATION | BOOKED | FAILED | CANCELLED
 // NotificationKind: ITINERARY_READY | BOOKING_CONFIRMED | BOOKING_FAILED | BUDGET_ALERT | CLARIFICATION_NEEDED | GENERAL
+// ItineraryOptionStatus: PROPOSED | SELECTED | DISCARDED
 
 model User {
   id        String   @id @default(cuid())
@@ -51,10 +53,11 @@ model Trip {
   startDate DateTime?
   endDate   DateTime?
 
-  itinerary     ItineraryDay[]
-  bookings      Booking[]
-  budgetEntries BudgetEntry[]
-  notifications Notification[]
+  itinerary        ItineraryDay[]
+  itineraryOptions ItineraryOption[]
+  bookings         Booking[]
+  budgetEntries    BudgetEntry[]
+  notifications    Notification[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -132,4 +135,37 @@ model Notification {
   message   String
   read      Boolean          @default(false)
   createdAt DateTime         @default(now())
+}
+
+// A candidate itinerary the user can choose between, generated before any
+// booking happens. Deliberately NOT materialized into ItineraryDay/Activity/
+// Booking rows -- those are only created for the option the user actually
+// selects (see selectItineraryOption in packages/core/src/orchestrator.ts),
+// so nothing can ever be booked against an option nobody picked.
+model ItineraryOption {
+  id          String @id @default(cuid())
+  tripId      String
+  trip        Trip   @relation(fields: [tripId], references: [id])
+  optionIndex Int    // 0-based, stable display order
+  status      String @default("PROPOSED")
+
+  label   String // short name, e.g. "Slow mornings, long lunches"
+  summary String // one-paragraph pitch for the comparison view
+  pace    String // relaxed | balanced | packed
+
+  // Model-ESTIMATED total for the whole trip, integer minor units. This is a
+  // planning estimate for comparing options, never a quoted price -- real
+  // prices only come from a provider search at booking time.
+  estimatedTotalCents Int
+  currency            String
+
+  // The full option payload: days/activities plus any real review data
+  // attached from packages/integrations/src/reviews.ts. Serialized
+  // ItineraryOptionDraft (see packages/core/src/agents/types.ts).
+  draftJson String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tripId, optionIndex])
 }

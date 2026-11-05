@@ -72,6 +72,37 @@ export type TourSearchParams = {
   interests?: string[];
 };
 
+// --- Reviews (read-only comparison data; see reviews.ts) ---
+
+export type PlaceReviewExcerpt = {
+  text: string; // verbatim from the provider -- never summarized or invented
+  rating?: number;
+  authorName?: string;
+  relativeTime?: string; // e.g. "2 months ago", as the provider phrases it
+};
+
+/**
+ * A real, resolved place with its real rating. Every rating field is optional
+ * on purpose: a place that exists but has no ratings yet must come back with
+ * them absent rather than zeroed, so the UI can say "no rating available"
+ * instead of showing a 0.0 nobody earned.
+ */
+export type PlaceReviewSummary = {
+  placeId: string;
+  name: string; // the provider's name for the place, not the queried string
+  formattedAddress?: string;
+  rating?: number; // 1.0 - 5.0
+  userRatingsTotal?: number;
+  excerpts: PlaceReviewExcerpt[];
+  googleMapsUri?: string;
+  source: "google_places";
+};
+
+export type PlaceReviewLookupParams = {
+  placeName: string; // a specific candidate name, e.g. "Memmo Alfama Hotel"
+  locationHint?: string; // city/destination, to disambiguate chains
+};
+
 export type BookingConfirmation = {
   providerRef: string;
   price: Money;

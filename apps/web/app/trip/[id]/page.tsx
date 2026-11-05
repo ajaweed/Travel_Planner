@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { BudgetBar } from "../../components/BudgetBar";
+import { ItineraryOptions, type ItineraryOption } from "../../components/ItineraryOptions";
 import { StatusPill } from "../../components/StatusPill";
 
 type TripData = any; // the API route returns Prisma's shape directly; tighten with a shared type once it stabilizes.
@@ -11,6 +12,11 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const [error, setError] = useState<string | null>(null);
   const [answer, setAnswer] = useState("");
   const [answering, setAnswering] = useState(false);
+  const [options, setOptions] = useState<ItineraryOption[] | null>(null);
+  const [choosingId, setChoosingId] = useState<string | null>(null);
+  const [chooseError, setChooseError] = useState<string | null>(null);
+
+  const tripStatus: string | undefined = data?.trip?.status;
 
   useEffect(() => {
     let cancelled = false;
@@ -37,6 +43,31 @@ export default function TripPage({ params }: { params: { id: string } }) {
     };
   }, [params.id]);
 
+  // Options are fetched separately from the 4s trip poll: the full option
+  // payload (every day of every option, plus review data) is far too heavy to
+  // re-download every four seconds, and it only changes once.
+  useEffect(() => {
+    if (tripStatus !== "CHOOSING") return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/trips/${params.id}/options`);
+        if (!res.ok) throw new Error(`Failed to load options: ${res.status}`);
+        const json = await res.json();
+        if (!cancelled) setOptions(json.options ?? []);
+      } catch (err) {
+        if (!cancelled) {
+          setChooseError(err instanceof Error ? err.message : "Failed to load your options.");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id, tripStatus]);
+
   async function submitAnswer(e: React.FormEvent) {
     e.preventDefault();
     if (!answer.trim()) return;
@@ -52,6 +83,37 @@ export default function TripPage({ params }: { params: { id: string } }) {
       setAnswering(false);
     }
   }
+
+  const chooseOption = useCallback(
+    async (optionId: string) => {
+      // Booking spends money, so the whole card set locks on the first click
+      // rather than relying on the server's 409 to catch a double submit.
+      setChoosingId(optionId);
+      setChooseError(null);
+      try {
+        const res = await fetch(`/api/trips/${params.id}/choose`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ optionId }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          if (res.status === 409) {
+            setChooseError("A plan has already been chosen for this trip — booking is underway.");
+          } else {
+            setChooseError(body.error ?? `Couldn't start booking: ${res.status}`);
+          }
+          setChoosingId(null);
+        }
+        // On success the trip poll takes over: status is already BOOKING and
+        // per-item booking pills appear as the agents work.
+      } catch (err) {
+        setChooseError(err instanceof Error ? err.message : "Couldn't start booking.");
+        setChoosingId(null);
+      }
+    },
+    [params.id],
+  );
 
   if (error) {
     return (
@@ -73,9 +135,15 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const pendingClarification = trip.notifications.find(
     (n: any) => n.kind === "CLARIFICATION_NEEDED" && !n.read,
   );
+  const isChoosing = trip.status === "CHOOSING";
+  // The gap between claiming a choice and the day rows existing: without this
+  // the page would briefly look empty under a "Booking…" pill.
+  const settingUp = trip.status === "BOOKING" && trip.itinerary.length === 0;
+  const planningFailed =
+    trip.status === "NEEDS_ATTENTION" && trip.itinerary.length === 0 && !isChoosing;
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-10">
+    <main className="mx-auto max-w-5xl px-6 py-10">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">{trip.title ?? "Your trip"}</h1>
         <StatusPill status={trip.status} />
@@ -107,10 +175,52 @@ export default function TripPage({ params }: { params: { id: string } }) {
       )}
 
       {trip.status === "PLANNING" && (
-        <p className="mt-6 text-sm text-neutral-400">Building your itinerary…</p>
+        <div className="mt-8">
+          <p className="text-sm text-neutral-400">
+            Drafting a few different versions of this trip… This takes a minute, and nothing is
+            being booked yet.
+          </p>
+          <ul className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="h-52 animate-pulse rounded-xl border border-neutral-800 bg-neutral-900/50" />
+            ))}
+          </ul>
+        </div>
       )}
-      {trip.status === "BOOKING" && (
-        <p className="mt-6 text-sm text-neutral-400">Itinerary ready — booking flights, hotels, and activities…</p>
+
+      {planningFailed && (
+        <p className="mt-8 text-sm text-amber-300">
+          We couldn&apos;t draft itinerary options for this trip. Nothing has been booked — try
+          again with different dates or budget.
+        </p>
+      )}
+
+      {isChoosing &&
+        (options === null ? (
+          <p className="mt-8 text-sm text-neutral-400">Loading your options…</p>
+        ) : options.length === 0 ? (
+          <p className="mt-8 text-sm text-amber-300">
+            No itinerary options are available for this trip yet.
+          </p>
+        ) : (
+          <ItineraryOptions
+            options={options}
+            onChoose={chooseOption}
+            choosingId={choosingId}
+            disabled={choosingId !== null}
+            error={chooseError}
+          />
+        ))}
+
+      {settingUp && (
+        <p className="mt-8 text-sm text-neutral-400">
+          Setting up your plan and starting on flights, hotels, and activities…
+        </p>
+      )}
+      {trip.status === "BOOKING" && trip.itinerary.length > 0 && (
+        <p className="mt-6 text-sm text-neutral-400">
+          Plan locked in — booking flights, hotels, and activities…
+        </p>
       )}
 
       {trip.itinerary.length > 0 && (
