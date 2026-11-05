@@ -72,3 +72,49 @@ Handoff: `integrations-dev` (reviews adapter), `backend-dev` (schema + orchestra
 routes), `ux-designer` -> `frontend-dev` (comparison view), `qa-tester` (code review
 gate), `devops` (migration + merge). Single branch, sequential roles -- the
 revision-prompt work stays unstarted until this is on `main`, per the previous entry.
+
+**2026-11-05 -- ux-designer** -- Interaction spec for the options-comparison
+view, for `frontend-dev` to implement on this branch. Written against design
+commitment #2 (choosing is a real decision) and #4 (honesty about gaps).
+
+**States on the trip dashboard**
+
+| Trip status | What the user sees |
+|---|---|
+| `PLANNING` | "Drafting a few different versions of this trip…" + a note that it takes a minute and nothing is being booked yet. Three skeleton cards, so the shape of the coming decision is visible before it arrives. |
+| `CHOOSING` | The comparison cards (below) + "Nothing is booked until you choose." Itinerary/booking sections stay hidden -- there is no itinerary yet. |
+| `BOOKING`, itinerary not yet written | "Setting up <label>…" -- covers the ~1s between claiming the choice and the day rows existing, so the page never looks empty. |
+| `BOOKING` onwards | Exactly today's dashboard: day-by-day itinerary, per-item booking pills, budget bar, notifications. Options are gone from the page -- the decision is made, re-litigating it is the revision feature's job, not this view's. |
+| `NEEDS_ATTENTION` with no options and no itinerary | Option generation failed outright: say so plainly, say nothing was booked, tell them to try again with different dates/budget. |
+
+**Each comparison card carries**, in this order (cost before prose -- it's the
+thing people actually compare):
+1. Label + pace badge.
+2. Estimated total, explicitly marked **est.**, plus the delta against the
+   cheapest option ("+$340 vs cheapest"). The cheapest card says "lowest
+   estimate" instead. Copy must never imply this is a quote -- one shared
+   footnote: "Estimates for comparison. Real prices come from the provider
+   when we book."
+3. Shape of the trip: N days, N activities, N things to book.
+4. The summary paragraph.
+5. **Named places with real rating badges** -- the hotel and any named tours:
+   `4.6 ★ · 1,843 reviews` where we matched a real place, and the literal words
+   **"No rating available"** where we didn't. Never a dash, never a zero, never
+   a greyed-out star row that reads as "bad". One real review excerpt (verbatim,
+   attributed) on the hotel, where we have one.
+6. "Choose this plan" -- a real button per card, not a radio + submit.
+
+**Why no rating** is stated once per card set, not per badge: "Google Places
+isn't configured, so no ratings could be looked up" (NOT_CONFIGURED) vs "None
+of these options named a specific place to look up" (NO_CANDIDATES) vs "Matched
+real ratings for 2 of 4 named places" (OK). A user seeing an unrated hotel
+needs to know whether that's the hotel's fault or ours.
+
+**Choosing**: the clicked card's button becomes "Starting bookings…", every
+other card's button disables immediately -- booking spends money, so a
+double-click must look impossible, not just be rejected server-side. If the
+server says it's already chosen (409), replace the cards with "A plan has
+already been chosen for this trip -- booking is underway." rather than an
+error, because that's what actually happened.
+
+Handoff: `frontend-dev`.
