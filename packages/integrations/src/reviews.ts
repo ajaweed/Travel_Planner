@@ -208,10 +208,18 @@ async function placeDetails(
 
 /**
  * Google Cloud APIs answer failures with { error: { code, status, message } }.
- * Quota exhaustion shows up as either a 429 or a 403 carrying
- * RESOURCE_EXHAUSTED, so both map to RATE_LIMITED; a plain 403 (key
- * restricted, or Places API not enabled on the project) is a real
- * configuration problem and must not be retried.
+ *
+ * - Quota exhaustion is either a 429 or a 403 carrying RESOURCE_EXHAUSTED:
+ *   RATE_LIMITED, retry later.
+ * - Any OTHER 401/403, and a 400 naming the API key, means the key is missing
+ *   permissions, restricted, or the Places API isn't enabled on the project.
+ *   That is a configuration problem, not a transient one, so it maps to
+ *   NOT_CONFIGURED -- which lets the caller's probe stop after one call instead
+ *   of burning a billable request per candidate on a key that will never work.
+ * - Everything else is a PROVIDER_ERROR, retryable only on 5xx.
+ *
+ * Classification reads the FULL body; only the human-facing message is
+ * truncated, so a verbose error can't push the status marker out of view.
  */
 function mapHttpFailure(
   status: number,
@@ -228,20 +236,37 @@ function mapHttpFailure(
       retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 1000,
     };
   }
+
+  if (status === 401 || status === 403 || (status === 400 && body.includes("API_KEY"))) {
+    return {
+      ok: false,
+      reason: "NOT_CONFIGURED",
+      message:
+        `${label} was rejected (${status}): the Google Places key is missing, restricted, ` +
+        "or the 'Places API (New)' is not enabled on its project. " +
+        `Provider said: ${truncate(body)}`,
+    };
+  }
+
   return {
     ok: false,
     reason: "PROVIDER_ERROR",
-    message: `${label} failed: ${status} ${body}`.trim(),
+    message: `${label} failed: ${status} ${truncate(body)}`.trim(),
     retryable: status >= 500,
   };
 }
 
+/** Full body, for classification. Truncation happens only when it's displayed. */
 async function safeText(res: Response): Promise<string> {
   try {
-    return (await res.text()).slice(0, 500);
+    return await res.text();
   } catch {
     return "";
   }
+}
+
+function truncate(body: string): string {
+  return body.length > 500 ? `${body.slice(0, 500)}…` : body;
 }
 
 function mapExcerpt(dto: PlaceReviewDto): PlaceReviewExcerpt | null {

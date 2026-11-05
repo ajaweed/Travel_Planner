@@ -202,6 +202,12 @@ export async function runItineraryAgent(
   const rawInput = toolUse.input as Record<string, unknown>;
   let parsed = ItineraryOptionDraftSchema.safeParse(rawInput);
   if (!parsed.success) {
+    // Only `days` goes through the repair path, on purpose. It's the one
+    // structurally-complex field, and it's the one Claude was observed
+    // double-encoding. The scalar metadata fields are handled by the schema
+    // instead (z.coerce on the number, .catch() on the enum) -- running them
+    // through JSON.parse would turn a legitimately numeric-looking label like
+    // "2024" into a number and fail validation that would otherwise pass.
     parsed = ItineraryOptionDraftSchema.safeParse(coerceStringifiedFields(rawInput, ["days"]));
   }
   if (!parsed.success) {

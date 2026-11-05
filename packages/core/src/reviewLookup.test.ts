@@ -73,7 +73,13 @@ describe("attachRealReviews", () => {
       "Lisbon",
     );
 
-    expect(option!.reviewLookup).toEqual({ status: "OK", lookedUp: 1, matched: 1 });
+    expect(option!.reviewLookup).toEqual({
+      status: "OK",
+      named: 1,
+      lookedUp: 1,
+      matched: 1,
+      failed: 0,
+    });
     expect(bookables(option!)[0]!.review?.rating).toBe(4.6);
     expect(lookupPlaceReviews).toHaveBeenCalledWith({
       placeName: "Memmo Alfama Hotel",
@@ -113,8 +119,72 @@ describe("attachRealReviews", () => {
       "Lisbon",
     );
 
-    expect(option!.reviewLookup).toEqual({ status: "OK", lookedUp: 1, matched: 0 });
+    // "We looked, it isn't a real place" -- the provider worked fine, so this
+    // is OK with 0 matches and 0 failures, NOT unavailable.
+    expect(option!.reviewLookup).toEqual({
+      status: "OK",
+      named: 1,
+      lookedUp: 1,
+      matched: 0,
+      failed: 0,
+    });
     expect(bookables(option!)[0]!.review).toBeUndefined();
+  });
+
+  it("reports UNAVAILABLE, not 0 matches, when every lookup errors", async () => {
+    // The distinction the UX spec insists on: a broken provider must never
+    // read as "none of these places have ratings".
+    lookupPlaceReviews.mockResolvedValue({ ok: false, reason: "RATE_LIMITED", retryAfterMs: 1000 });
+
+    const [option] = await attachRealReviews(
+      [draftWith([{ kind: "HOTEL", candidateName: "Hotel One" }])],
+      "Lisbon",
+    );
+
+    expect(option!.reviewLookup.status).toBe("UNAVAILABLE");
+    expect(bookables(option!)[0]!.review).toBeUndefined();
+  });
+
+  it("reports the failure count alongside matches when only some lookups error", async () => {
+    lookupPlaceReviews
+      .mockResolvedValueOnce({ ok: true, data: summary("Good Hotel", 4.4) })
+      .mockResolvedValueOnce({ ok: false, reason: "RATE_LIMITED", retryAfterMs: 1000 });
+
+    const [option] = await attachRealReviews(
+      [
+        draftWith([
+          { kind: "HOTEL", candidateName: "Good Hotel" },
+          { kind: "TOUR", candidateName: "Throttled Tour" },
+        ]),
+      ],
+      "Lisbon",
+    );
+
+    expect(option!.reviewLookup).toEqual({
+      status: "OK",
+      named: 2,
+      lookedUp: 2,
+      matched: 1,
+      failed: 1,
+    });
+  });
+
+  it("never attaches a hotel's rating to a flight with the same candidate name", async () => {
+    lookupPlaceReviews.mockResolvedValue({ ok: true, data: summary("Ambiguous Name", 4.9) });
+
+    const [option] = await attachRealReviews(
+      [
+        draftWith([
+          { kind: "HOTEL", candidateName: "Ambiguous Name" },
+          { kind: "FLIGHT", candidateName: "Ambiguous Name" },
+        ]),
+      ],
+      "Lisbon",
+    );
+
+    const items = bookables(option!);
+    expect(items[0]!.review?.rating).toBe(4.9);
+    expect(items[1]!.review).toBeUndefined();
   });
 
   it("attaches nothing for a real place that has no rating yet", async () => {
@@ -125,7 +195,13 @@ describe("attachRealReviews", () => {
       "Lisbon",
     );
 
-    expect(option!.reviewLookup).toEqual({ status: "OK", lookedUp: 1, matched: 0 });
+    expect(option!.reviewLookup).toEqual({
+      status: "OK",
+      named: 1,
+      lookedUp: 1,
+      matched: 0,
+      failed: 0,
+    });
     expect(bookables(option!)[0]!.review).toBeUndefined();
   });
 
@@ -186,7 +262,13 @@ describe("attachRealReviews", () => {
       "Lisbon",
     );
 
-    expect(option!.reviewLookup).toEqual({ status: "OK", lookedUp: 2, matched: 1 });
+    expect(option!.reviewLookup).toEqual({
+      status: "OK",
+      named: 2,
+      lookedUp: 2,
+      matched: 1,
+      failed: 1,
+    });
     const items = bookables(option!);
     expect(items[0]!.review?.rating).toBe(4.8);
     expect(items[1]!.review).toBeUndefined();

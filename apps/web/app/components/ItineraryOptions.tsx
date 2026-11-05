@@ -39,8 +39,9 @@ type OptionDay = {
 };
 
 type ReviewLookup =
-  | { status: "OK"; lookedUp: number; matched: number }
+  | { status: "OK"; named: number; lookedUp: number; matched: number; failed: number }
   | { status: "NOT_CONFIGURED"; message: string }
+  | { status: "UNAVAILABLE"; message: string }
   | { status: "NO_CANDIDATES" };
 
 export type ItineraryOption = {
@@ -127,6 +128,15 @@ function ReviewNote({ lookup }: { lookup: ReviewLookup }) {
       </p>
     );
   }
+  if (lookup.status === "UNAVAILABLE") {
+    // Configured but broken. Must not read as "none of these places exist".
+    return (
+      <p className="text-xs text-neutral-500">
+        Ratings couldn&apos;t be looked up right now ({lookup.message}) — that&apos;s on us,
+        not a reflection of these places.
+      </p>
+    );
+  }
   if (lookup.status === "NO_CANDIDATES") {
     return (
       <p className="text-xs text-neutral-500">
@@ -136,8 +146,15 @@ function ReviewNote({ lookup }: { lookup: ReviewLookup }) {
   }
   return (
     <p className="text-xs text-neutral-500">
-      Matched real Google ratings for {lookup.matched} of {lookup.lookedUp} named{" "}
-      {lookup.lookedUp === 1 ? "place" : "places"}.
+      Matched real Google ratings for {lookup.matched} of {lookup.named} named{" "}
+      {lookup.named === 1 ? "place" : "places"}
+      {lookup.named > lookup.lookedUp
+        ? ` (only the first ${lookup.lookedUp} were looked up)`
+        : ""}
+      {lookup.failed > 0
+        ? `; ${lookup.failed} lookup${lookup.failed === 1 ? "" : "s"} failed`
+        : ""}
+      .
     </p>
   );
 }

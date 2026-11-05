@@ -165,17 +165,52 @@ describe("lookupPlaceReviews", () => {
     if (!result.ok) expect(result.reason).toBe("RATE_LIMITED");
   });
 
-  it("maps a disabled/restricted key to a non-retryable PROVIDER_ERROR", async () => {
+  it("maps a disabled/restricted key to NOT_CONFIGURED, not a transient error", async () => {
+    // It's a config problem, not an outage -- and reporting it as such lets
+    // the caller stop after one probe instead of burning a billable request
+    // per candidate on a key that will never work.
     mockFetch({ search: textResponse(apiDisabledBody, 403) });
 
     const result = await lookupPlaceReviews({ placeName: "Memmo Alfama Hotel" });
 
     expect(result.ok).toBe(false);
-    if (!result.ok && result.reason === "PROVIDER_ERROR") {
-      expect(result.retryable).toBe(false);
+    if (!result.ok && result.reason === "NOT_CONFIGURED") {
       expect(result.message).toContain("403");
     } else {
-      expect.unreachable("expected PROVIDER_ERROR");
+      expect.unreachable("expected NOT_CONFIGURED");
+    }
+  });
+
+  it("still classifies quota exhaustion when the error body is very long", async () => {
+    // Classification must read the untruncated body: the status marker can sit
+    // past any display truncation point.
+    const padded = JSON.stringify({
+      error: { code: 403, message: "x".repeat(900), status: "RESOURCE_EXHAUSTED" },
+    });
+    mockFetch({ search: textResponse(padded, 403) });
+
+    const result = await lookupPlaceReviews({ placeName: "Memmo Alfama Hotel" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("RATE_LIMITED");
+  });
+
+  it("honours Retry-After on a 429", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("{}", { status: 429, headers: { "Retry-After": "7" } }),
+      ),
+    );
+
+    const result = await lookupPlaceReviews({ placeName: "Memmo Alfama Hotel" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.reason === "RATE_LIMITED") {
+      expect(result.retryAfterMs).toBe(7000);
+    } else {
+      expect.unreachable("expected RATE_LIMITED");
     }
   });
 
