@@ -1,5 +1,5 @@
 import { AlertTriangle, FlaskConical, Info } from "lucide-react";
-import { fmtMoney } from "./ui";
+import { CARD_CLASSES, fmtMoney } from "./ui";
 
 type Budget = {
   budgetTotalCents: number;
@@ -28,10 +28,16 @@ export function BudgetBar({
 }) {
   const { currency, budgetTotalCents: total } = budget;
   const card =
-    "relative rounded-2xl border border-sand-200 bg-white p-5 shadow-card tabular-nums";
+    `relative ${CARD_CLASSES} p-5 tabular-nums`;
 
-  // Before a plan is chosen: just the budget, no bar.
-  if (mode === null) {
+  // Trips that predate booking modes default to SELF but may hold real
+  // (app-booked) spend: those must show the real figures, never "~$0".
+  const hasRealSpend = budget.committedCents + budget.pendingCents > 0;
+  const effectiveMode =
+    mode === "SELF" && hasRealSpend ? "AI" : mode === "SELF" && budget.estimatedCents == null ? null : mode;
+
+  // Before a plan is chosen (or with nothing to show): just the budget, no bar.
+  if (effectiveMode === null) {
     return (
       <div className={card}>
         <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink-500">Budget</p>
@@ -40,7 +46,7 @@ export function BudgetBar({
     );
   }
 
-  if (mode === "SELF") {
+  if (effectiveMode === "SELF") {
     // We never see a real price in SELF mode: nothing here may look like a receipt.
     const est = budget.estimatedCents ?? 0;
     const over = est > total;

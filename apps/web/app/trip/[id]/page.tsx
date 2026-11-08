@@ -23,7 +23,7 @@ import { ContourPattern } from "../../components/ContourPattern";
 import { ItineraryTimeline } from "../../components/ItineraryTimeline";
 import { Notifications } from "../../components/Notifications";
 import { StatusPill } from "../../components/StatusPill";
-import { Alert, INPUT_CLASSES, buttonClasses } from "../../components/ui";
+import { Alert, buttonClasses, CARD_CLASSES, INPUT_CLASSES } from "../../components/ui";
 
 type TripData = any; // the API route returns Prisma's shape directly; tighten with a shared type once it stabilizes.
 
@@ -38,10 +38,16 @@ export default function TripPage({ params }: { params: { id: string } }) {
   // "info" for the AI-mode "still working" message, which isn't a failure.
   const [chooseErrorTone, setChooseErrorTone] = useState<"danger" | "info">("danger");
   const answerRef = useRef<HTMLInputElement>(null);
-  const clarificationId: string | undefined =
-    data?.trip?.status === "DRAFT" || data?.trip?.status === "PLANNING"
-      ? data?.trip?.notifications?.find((n: any) => n.kind === "CLARIFICATION_NEEDED" && !n.read)?.id
-      : undefined;
+  // Gated on status as well as the unread flag: nothing in the app marks
+  // notifications read, so without the status check an answered clarification
+  // prompt stays on screen forever -- and submitting it on a trip that has
+  // already chosen an option is rejected server-side anyway. Computed once,
+  // here, so the focus effect and the rendered form can't disagree.
+  const awaitingBrief = data?.trip?.status === "DRAFT" || data?.trip?.status === "PLANNING";
+  const pendingClarification = awaitingBrief
+    ? data?.trip?.notifications?.find((n: any) => n.kind === "CLARIFICATION_NEEDED" && !n.read)
+    : undefined;
+  const clarificationId: string | undefined = pendingClarification?.id;
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [optionsReload, setOptionsReload] = useState(0);
   const [alreadyChosen, setAlreadyChosen] = useState(false);
@@ -170,7 +176,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
   if (error) {
     return (
       <main id="main" className="mx-auto max-w-5xl px-6 py-16 md:px-8">
-        <div className="mx-auto max-w-md rounded-2xl border border-sand-200 bg-white p-6 text-center shadow-card">
+        <div className={`mx-auto max-w-md p-6 text-center ${CARD_CLASSES}`}>
           <MapPinOff size={28} strokeWidth={1.75} aria-hidden="true" className="mx-auto text-danger-700" />
           <h1 className="mt-3 font-display text-2xl font-semibold text-ink-900">We couldn&apos;t load this trip</h1>
           <p role="alert" className="mt-2 text-sm text-ink-500">
@@ -206,14 +212,6 @@ export default function TripPage({ params }: { params: { id: string } }) {
   }
 
   const { trip, budget } = data;
-  // Gated on status as well as the unread flag: nothing in the app marks
-  // notifications read, so without the status check an answered clarification
-  // prompt stays on screen forever -- and submitting it on a trip that has
-  // already chosen an option is now rejected server-side anyway.
-  const awaitingBrief = trip.status === "DRAFT" || trip.status === "PLANNING";
-  const pendingClarification = awaitingBrief
-    ? trip.notifications.find((n: any) => n.kind === "CLARIFICATION_NEEDED" && !n.read)
-    : undefined;
   const isChoosing = trip.status === "CHOOSING";
   // The gap between claiming a choice and the day rows existing: without this
   // the page would briefly look empty under a "Booking…" pill.
@@ -224,8 +222,12 @@ export default function TripPage({ params }: { params: { id: string } }) {
   // A plan has been chosen once the itinerary exists or the trip has moved past choosing.
   const planChosen =
     trip.itinerary.length > 0 || ["READY_TO_BOOK", "BOOKING", "CONFIRMED"].includes(trip.status);
-  // AI mode with sandbox providers: every confirmation/money surface says "test".
-  const testMode = aiMode && !data.aiBooking?.live;
+  // "Test" labels promise that no money moved, so they appear only when no
+  // provider is configured for production. Partly-live setups and a missing
+  // readiness flag both get NO test labels: a real charge must never be
+  // presented as fake. (Readiness reflects the server's current env, not the
+  // env at booking time -- acceptable while every provider is sandbox-only.)
+  const testMode = aiMode && data.aiBooking != null && !data.aiBooking.anyLive;
   const hasLinks = trip.itinerary.some((day: any) =>
     day.activities.some((a: any) => a.booking?.status === "LINK_OUT"),
   );
@@ -241,7 +243,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const optionSkeletons = (
     <ul className="mt-6 grid gap-5 md:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
       {[0, 1, 2].map((i) => (
-        <li key={i} className="overflow-hidden rounded-2xl border border-sand-200 bg-white shadow-card">
+        <li key={i} className={`overflow-hidden ${CARD_CLASSES}`}>
           <div className="h-10 bg-sand-100 motion-safe:animate-pulse" />
           <div className="space-y-3 p-5">
             <div className="h-6 w-3/4 rounded bg-sand-100 motion-safe:animate-pulse" />
@@ -490,7 +492,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
           </section>
         )}
 
-        <Notifications notifications={trip.notifications} unreadCount={data.unreadCount ?? 0} testMode={testMode} />
+        <Notifications notifications={trip.notifications} testMode={testMode} />
       </div>
     </main>
   );
@@ -502,5 +504,9 @@ function formatDateRange(start?: string | null, end?: string | null): string {
   const s = new Date(start);
   if (!end) return s.toLocaleDateString("en-US", { ...opts, year: "numeric" });
   const e = new Date(end);
-  return `${s.toLocaleDateString("en-US", opts)} – ${e.toLocaleDateString("en-US", { ...opts, year: "numeric" })}`;
+  // Show the start year too when the trip crosses New Year, or "Dec 28 – Jan 4,
+  // 2027" reads as a December after the end date.
+  const sameYear = s.getUTCFullYear() === e.getUTCFullYear();
+  const startOpts = sameYear ? opts : { ...opts, year: "numeric" as const };
+  return `${s.toLocaleDateString("en-US", startOpts)} – ${e.toLocaleDateString("en-US", { ...opts, year: "numeric" })}`;
 }

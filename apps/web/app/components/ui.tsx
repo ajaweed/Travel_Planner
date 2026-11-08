@@ -21,22 +21,8 @@ export function buttonClasses(variant: keyof typeof BUTTON_VARIANTS = "primary",
   return `${BUTTON_BASE} ${BUTTON_VARIANTS[variant]} ${extra}`;
 }
 
-export function Card({
-  children,
-  className = "",
-  as: Tag = "div",
-  ...rest
-}: {
-  children: ReactNode;
-  className?: string;
-  as?: "div" | "section" | "li" | "article" | "form";
-} & Record<string, unknown>) {
-  return (
-    <Tag className={`rounded-2xl border border-sand-200 bg-white shadow-card ${className}`} {...rest}>
-      {children}
-    </Tag>
-  );
-}
+/** The one card surface. Use this rather than re-typing the classes. */
+export const CARD_CLASSES = "rounded-2xl border border-sand-200 bg-white shadow-card";
 
 export const INPUT_CLASSES =
   "w-full rounded-xl border border-sand-400 bg-white px-4 py-3 text-ink-900 placeholder:text-ink-500 focus:border-lagoon-600 focus:outline-none focus:ring-2 focus:ring-lagoon-600/30";

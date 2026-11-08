@@ -479,3 +479,23 @@ Verified by screenshots (headless Edge) of landing (1280, 520), options with rea
 SELF trip, AI test-mode trip with failures; fixed from those: squeezed titles on rows with
 3 links, hard gradient edge, empty 3rd column with 2 options, long hotel names wrapping.
 Not verified: true 375px (headless Edge won't go below ~500px) -- qa-tester.
+`/code-review` (medium) on `frontend-dev/golden-hour` raised 10 findings; all fixed:
+- **Test labels on real charges (most serious):** `testMode` was `aiMode && !live`, so a
+  partly-live setup labelled real charges "Booked (test)" / "Nothing has been charged",
+  and a missing readiness flag defaulted to test. Now test labels require the flag
+  present AND no provider configured for production (`!anyLive`). Known limit, noted in
+  code: readiness is the server's current env, not the env at booking time.
+- Legacy SELF trips with real app-booked spend show real figures in `BudgetBar` (no more
+  "~$0"); SELF with no estimate shows the plain budget.
+- Booking status detail / failure reasons render for every non-link-out booking, not
+  only AI-mode trips (legacy rows lost their reasons).
+- Removed the unread badge (nothing marks notifications read, so it only grew).
+- Only the newest update is `aria-live`; the whole feed was live and re-announced every
+  relative timestamp each 4s poll.
+- "Lowest estimate" shown once (tier strip), not twice.
+- Clarification gating computed once before the early returns (focus effect and form
+  can't disagree).
+- Dead `Card` component replaced by a shared `CARD_CLASSES` used across components.
+- Date ranges show the start year when a trip crosses New Year.
+Re-verified: typecheck, 60 tests, build; screenshots of the AI test-mode trip and the
+options view after the fixes. Merged to `main` and pushed. Reviewed by `/code-review`.

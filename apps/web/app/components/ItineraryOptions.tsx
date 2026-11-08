@@ -289,10 +289,9 @@ export function ItineraryOptions({
                     </span>
                     <span className="text-xs font-medium text-ink-500">est. total</span>
                   </div>
-                  {!single && (
-                    <p className="mt-1 text-sm text-ink-700">
-                      {delta === 0 ? "Lowest estimate" : `+${fmtMoney(delta, option.currency)} vs cheapest`}
-                    </p>
+                  {/* The cheapest card says "Lowest estimate" once, in its tier strip. */}
+                  {!single && delta > 0 && (
+                    <p className="mt-1 text-sm text-ink-700">+{fmtMoney(delta, option.currency)} vs cheapest</p>
                   )}
                 </div>
 

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { BookingLinks } from "./BookingLinks";
 import { StatusPill } from "./StatusPill";
-import { fmtMoney } from "./ui";
+import { CARD_CLASSES, fmtMoney } from "./ui";
 
 // The chosen itinerary as a vertical timeline (docs/visual-design.md §4.3,
 // §4.9). SELF rows carry link-outs; AI rows carry per-item booking state plus
@@ -197,7 +197,7 @@ function ActivityRow({ activity, aiMode, testMode }: { activity: Activity; aiMod
             {activity.title}
           </p>
           {activity.description && <p className="mt-0.5 text-sm text-ink-500">{activity.description}</p>}
-          {aiMode && booking && (
+          {booking && !linkOut && (
             <div className="mt-1.5" aria-live="polite">
               <AiBookingDetail booking={booking} testMode={testMode} />
             </div>
@@ -242,7 +242,7 @@ export function ItineraryTimeline({
           >
             {day.dayIndex + 1}
           </span>
-          <div className="overflow-hidden rounded-2xl border border-sand-200 bg-white shadow-card">
+          <div className={`overflow-hidden ${CARD_CLASSES}`}>
             <div className="flex flex-wrap items-start justify-between gap-2 p-4 md:p-5">
               <div>
                 <h3 className="font-display text-xl font-semibold text-ink-900">

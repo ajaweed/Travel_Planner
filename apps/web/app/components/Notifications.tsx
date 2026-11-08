@@ -9,6 +9,7 @@ import {
   XCircle,
   type LucideIcon,
 } from "lucide-react";
+import { CARD_CLASSES } from "./ui";
 
 // "Updates" feed (docs/visual-design.md §4.4). Newest first, as the API returns.
 
@@ -36,11 +37,9 @@ function relativeTime(iso: string, now: number): string {
 
 export function Notifications({
   notifications,
-  unreadCount,
   testMode,
 }: {
   notifications: Notification[];
-  unreadCount: number;
   testMode: boolean;
 }) {
   const now = Date.now();
@@ -48,21 +47,21 @@ export function Notifications({
     <section aria-labelledby="updates-heading" className="mt-12">
       <h2 id="updates-heading" className="flex items-center gap-2 font-display text-2xl font-semibold text-ink-900">
         Updates
-        {unreadCount > 0 && (
-          <span className="rounded-full bg-lagoon-600 px-2 py-0.5 font-sans text-xs font-semibold tabular-nums text-white">
-            {unreadCount}
-            <span className="sr-only"> unread</span>
-          </span>
-        )}
       </h2>
-      <div aria-live="polite" className="mt-4">
+      {/* Only the newest message is live. Wrapping the whole feed made screen
+          readers re-announce every relative timestamp on each 4s poll. No unread
+          badge: nothing marks notifications read, so it could only ever grow. */}
+      <p aria-live="polite" className="sr-only">
+        {notifications[0]?.message ?? ""}
+      </p>
+      <div className="mt-4">
         {notifications.length === 0 ? (
           <p className="flex items-center gap-2 text-sm text-ink-500">
             <Bell size={16} strokeWidth={1.75} aria-hidden="true" />
             No updates yet. We&apos;ll post here as your plan comes together.
           </p>
         ) : (
-          <ul className="divide-y divide-sand-100 overflow-hidden rounded-2xl border border-sand-200 bg-white shadow-card">
+          <ul className={`divide-y divide-sand-100 overflow-hidden ${CARD_CLASSES}`}>
             {notifications.map((n) => {
               const { Icon, tile } = KINDS[n.kind] ?? FALLBACK;
               return (
