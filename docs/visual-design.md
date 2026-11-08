@@ -256,8 +256,22 @@ The disabled primary uses `sand-300` bg with `ink-700` text (5.57:1) instead of
 - **Icon system: `lucide-react`** (ISC license; add to `apps/web` deps). Default
   `size={18} strokeWidth={1.75}`, `aria-hidden="true"` whenever a text label sits next
   to the icon. Icon-only buttons need an `aria-label`.
-- **No photos.** We have no image rights, and a generic beach photo for a Lisbon trip would
-  misrepresent the plan. Instead:
+- **Destination photos (added 2026-11-08, product owner request).** Photos are allowed
+  only when they show the actual place and carry a free license. Source: the lead image
+  of the place's Wikipedia article, falling back to Wikivoyage
+  (`packages/core/src/destinationPhoto.ts`, served by `GET /api/photos?place=`). Rules
+  the code enforces:
+  - Only Commons-hosted JPEG/WebP files with a free license (CC BY, CC BY-SA, CC0,
+    public domain). Never non-free, wiki-local files, flags, maps, logos or collages.
+  - **Every photo shows its credit**: author (linked to the Commons file page) and license
+    (linked to the license), via `<PhotoCredit>`. Only the author may truncate.
+  - No photo, a gradient instead. A failed lookup returns null, never an error.
+  - Photos are decorative (`alt=""`): the place name is always in the text next to them.
+  - Where they appear: the trip header (one wide photo, or up to 3 tiles for multi-city)
+    and the landing page's "Need a starting point?" cards, where each card's photo
+    matches the place named on it and clicking fills the prompt. No generic scenery.
+  Still no photos of specific hotels/tours (no rights to provider imagery yet).
+- Without a photo, these still carry the look:
   1. The `bg-sunrise` gradient behind the landing hero and the trip header band.
   2. An original **contour-line SVG pattern** (concentric, wobbly topographic lines)
      authored by us as an inline component, `components/ContourPattern.tsx`. Stroke
@@ -870,8 +884,7 @@ Give each row `id="activity-{id}"` so notifications can link to it.
 - Payment-method collection and checkout for **live** AI booking. That needs its own
   design pass before any provider leaves sandbox. Until then the AI card's live state
   must not ship.
-- Destination photography, maps or illustrations. Revisit only with a licensed source
-  (e.g. a provider's own property images under their terms) and only where the image is
-  of the actual place being booked.
+- Maps, illustrations and photos of specific hotels/tours. Destination photos are now
+  in (see §3). Property photos need a provider's own images under their terms.
 - Any change to copy that's flagged above as "unchanged", or to the status-gating
   logic in the trip page.

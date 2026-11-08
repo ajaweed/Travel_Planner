@@ -16,3 +16,5 @@ export { getAiBookingReadiness } from "./aiBookingReadiness";
 export { reapStalledBookings } from "./orchestrator";
 export type { AiBookingReadiness } from "./aiBookingReadiness";
 export type { BookingLink, LinkSearchParams } from "./bookingLinks";
+export { getDestinationPhoto, lookupDestinationPhoto } from "./destinationPhoto";
+export type { DestinationPhoto } from "./destinationPhoto";

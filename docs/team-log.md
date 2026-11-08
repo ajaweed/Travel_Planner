@@ -528,3 +528,10 @@ silently broke the regex; caught by a test, repo scanned clean for control chara
 - `ResearchLinks` renders a span, not a `<p>` inside a `<span>`.
 85+13 tests, typecheck, build pass; live API re-checked. Merged to `main` and pushed.
 Reviewed by `/code-review`.
+
+**2026-11-08 -- frontend-dev** -- START `frontend-dev/destination-photos`: product owner asked
+for "some pictures to make it look nice". This reverses the §3 "no photos" rule, using the
+exception that section allowed for: a licensed source showing the actual place. Plan:
+Wikipedia lead image of the trip's real destination, with free-licensed Commons images only,
+credited (author + license + link) wherever shown. Trip header gets the destination photo;
+landing page gets clickable destination-idea cards.
