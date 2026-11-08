@@ -24,6 +24,7 @@ import { ItineraryTimeline } from "../../components/ItineraryTimeline";
 import { Notifications } from "../../components/Notifications";
 import { StatusPill } from "../../components/StatusPill";
 import { TripPhotoBanner } from "../../components/TripPhotoBanner";
+import type { Photo } from "../../components/DestinationPhoto";
 import { Alert, buttonClasses, CARD_CLASSES, INPUT_CLASSES } from "../../components/ui";
 
 type TripData = any; // the API route returns Prisma's shape directly; tighten with a shared type once it stabilizes.
@@ -55,6 +56,28 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const [bookingMode, setBookingMode] = useState<BookingMode>("SELF");
 
   const tripStatus: string | undefined = data?.trip?.status;
+  // Changes when the itinerary does (it's created once a plan is chosen).
+  const activityIds: string = (data?.trip?.itinerary ?? [])
+    .flatMap((d: any) => d.activities.map((a: any) => a.id))
+    .join(",");
+  const [stopPhotos, setStopPhotos] = useState<Record<string, Photo>>({});
+
+  // Stop photos are fetched once per itinerary, not on the 4s poll: they come
+  // from Wikimedia and never change while the page is open. Decoration only,
+  // so failures are silent.
+  useEffect(() => {
+    if (!activityIds) return;
+    let cancelled = false;
+    fetch(`/api/trips/${params.id}/photos`)
+      .then((r) => (r.ok ? r.json() : { stops: {} }))
+      .then((j) => {
+        if (!cancelled) setStopPhotos(j?.stops ?? {});
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id, activityIds]);
 
   useEffect(() => {
     let cancelled = false;
@@ -490,7 +513,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
             <h2 id="itinerary-heading" className="font-display text-2xl font-semibold text-ink-900">
               Your itinerary
             </h2>
-            <ItineraryTimeline days={trip.itinerary} aiMode={aiMode} testMode={testMode} />
+            <ItineraryTimeline days={trip.itinerary} aiMode={aiMode} testMode={testMode} stopPhotos={stopPhotos} />
           </section>
         )}
 

@@ -267,9 +267,21 @@ The disabled primary uses `sand-300` bg with `ink-700` text (5.57:1) instead of
     (linked to the license), via `<PhotoCredit>`. Only the author may truncate.
   - No photo, a gradient instead. A failed lookup returns null, never an error.
   - Photos are decorative (`alt=""`): the place name is always in the text next to them.
-  - Where they appear: the trip header (one wide photo, or up to 3 tiles for multi-city)
-    and the landing page's "Need a starting point?" cards, where each card's photo
-    matches the place named on it and clicking fills the prompt. No generic scenery.
+  - Where they appear: the trip header (every destination: one wide photo, 2-3 side by
+    side, a grid beyond that; de-duplicated), the landing page's "Need a starting
+    point?" cards (each photo matches the place named on the card; clicking fills the
+    prompt), and **itinerary stops** (added 2026-11-08). No generic scenery.
+  - **Stop photos** (`core/src/stopPhotos.ts`, `GET /api/trips/:id/photos`): a stop gets
+    a photo only if its title names a specific place, a Wikipedia search result for that
+    name has coordinates within 60 km of the stop's city, and the result's name matches
+    the stop's own words (not just "Market" or "Beach"). Stops like "Casual dinner at a
+    local tasca" keep their icon. The thumbnail (96x64, 112x80 from `sm`) replaces the
+    kind icon, which rides on its corner. The credit names what the photo actually
+    shows ("Photo of Dubai Textile Souk: ..."), since that can differ from the stop title.
+  - All Wikimedia traffic goes through `core/src/wikimedia.ts`: identified User-Agent
+    with contact (their 200 req/min tier; anonymous is 10), at most 3 requests in flight,
+    120/min budget, Retry-After honoured, and batched lookups (one request covers up to 50
+    places).
   Still no photos of specific hotels/tours (no rights to provider imagery yet).
 - Without a photo, these still carry the look:
   1. The `bg-sunrise` gradient behind the landing hero and the trip header band.

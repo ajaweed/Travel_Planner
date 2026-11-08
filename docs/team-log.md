@@ -563,3 +563,43 @@ Tests: 111 core + 13 (28 new photo tests), typecheck and build pass. Screenshots
 the landing page and the Lisbon/Kyoto/Dubai trips. Env note: an orphan `next dev` was left
 holding port 3000 (killing it was blocked), so verification ran on :3001.
 Merged to `main` and pushed. Reviewed by `/code-review`.
+
+**2026-11-08 -- frontend-dev** -- `frontend-dev/stop-photos`: product owner asked for
+"pictures of the location/destination for each place the user wants to go" and chose
+both offered options: every destination in the trip header, and a photo for each
+itinerary stop that names a real place.
+- **Wikimedia rate limits drove the design.** While testing we were blocked (HTTP 429 on
+  all api.php calls) after 7 searches. Wikimedia's 2026 limits: 10 req/min anonymous,
+  200 with contact info in the User-Agent. Product owner chose the public repo URL as the
+  contact (`WIKIMEDIA_CONTACT` overrides). New `core/src/wikimedia.ts` is the only client:
+  globalThis-shared limiter, at most 3 in flight, 120/min, 8s per-request timeout, 5s max
+  queue wait (fails fast to "no photo"), Retry-After honoured.
+- Destination lookups are batched (up to 50 titles per request). `/api/photos` takes
+  several `place`s, and the client groups same-tick requests, so the landing cards are 1 call.
+- **Stop photos** (`core/src/stopPhotos.ts`, `GET /api/trips/:id/photos`): search by the
+  places a title names (e.g. "Castelo de São Jorge"), accepted only if the article is within
+  60 km of the stop's city and its name matches the stop's words. Live tests across
+  Lisbon/Dubai/Kyoto: Alfama, São Jorge Castle, Time Out Market Lisboa, Dubai Creek,
+  Dubai Textile Souk, Burj Khalifa, Dubai Fountain, Dubai Marina, Palm Jumeirah, Fushimi
+  Inari-taisha, Nishiki Market, Gion. No wrong places; generic stops keep their icon.
+  Credits name what the photo shows. City-per-activity logic moved to
+  `resolveActivityPlaces()` (core), shared with the trip route.
+- The header shows every destination (grid beyond 3), de-duplicated by name and by photo.
+`/code-review` (medium) raised 10 findings; all fixed:
+- No request ever timed out. Each now has an 8s timeout plus a 5s max queue wait, instead
+  of up to ~60s or forever.
+- Lost wakeups in the limiter: a 429 now wakes all waiters, and a waiter that gives up
+  passes its wakeup on.
+- One itinerary could use the whole budget: capped at 24 searches per trip load; the rest
+  stay uncached for next visit.
+- One odd place name failed the whole batched request: invalid names now just get null.
+- The in-flight dedupe was lost: concurrent callers share in-flight place lookups again.
+- Public spam could starve trip pages: the cold-lookup cap now applies only to the public
+  endpoint, and is refunded when Wikimedia is unavailable.
+- The stop cache key ignored the description: it now includes it.
+- `readPage` reused in search parsing; shared `ttlCache` helper replaces two hand-rolled
+  caches; unused single-place exports removed.
+Tests: 162 core + 13 (fake Wikimedia fixture; limiter, batching, matching, cache tests).
+Typecheck and build pass. Screenshots: landing, Dubai itinerary with stop thumbnails, and a
+temporary 5-city trip (inserted and then deleted from dev.db). Merged to `main` and pushed.
+Reviewed by `/code-review`.

@@ -3,13 +3,12 @@ import { prisma } from "@trip-planner/db";
 import {
   buildBookingLinks,
   buildResearchLinks,
-  destinationFor,
   destinationsFromBrief,
   getAiBookingReadiness,
   getBudgetStatus,
   getUnreadNotifications,
-  parseStoredSearchParams,
   reapStalledBookings,
+  resolveActivityPlaces,
 } from "@trip-planner/core";
 import type { BookingKind } from "@trip-planner/db";
 
@@ -41,58 +40,40 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   // stored search params (never stored URLs), so improving a link builder
   // improves every existing trip without a migration.
   const destinations = destinationsFromBrief(trip.briefJson);
-  // Multi-city trips: the agent doesn't tag days with a city, so an activity
-  // that doesn't name one ("Casual dinner at a local tasca") inherits its day's
-  // city -- taken from that day's bookings -- carried forward from earlier days.
-  let carriedCity: string | undefined = destinations.length === 1 ? destinations[0] : undefined;
+  // Each activity's city (multi-city aware) and stored search params.
+  const places = resolveActivityPlaces(trip.itinerary, destinations);
 
-  const itinerary = trip.itinerary.map((day) => {
-    const stored = new Map(
-      day.activities.flatMap((a) =>
-        a.booking ? [[a.id, parseStoredSearchParams(a.booking.searchParamsJson)] as const] : [],
-      ),
-    );
-    const dayCity =
-      day.activities
-        .map((a) => (a.booking?.kind !== "FLIGHT" ? stored.get(a.id)?.destination : undefined))
-        .find((d): d is string => typeof d === "string") ?? carriedCity;
-    carriedCity = dayCity;
-
-    return {
-      ...day,
-      activities: day.activities.map((activity) => {
-        const params = stored.get(activity.id) ?? {};
-        const candidateName = typeof params.candidateName === "string" ? params.candidateName : undefined;
-        return {
-          ...activity,
-          // "See what people say" (Google / Reddit) -- deterministic URLs, never model-written.
-          research: buildResearchLinks({
-            title: activity.title,
-            candidateName,
-            destination:
-              (typeof params.destination === "string" ? params.destination : undefined) ??
-              destinationFor(destinations, candidateName, activity.title, activity.description ?? undefined) ??
-              dayCity,
-            kind: activity.booking?.kind,
-          }),
-          booking: activity.booking && {
-            ...activity.booking,
-            links:
-              activity.booking.status === "LINK_OUT" ||
-              // Fallback links only on AI-mode trips: legacy (pre-link) rows only
-              // stored a hint, so their links would lack dates and destination.
-              (trip.bookingMode === "AI" && !NO_LINKS.has(activity.booking.status))
-                ? buildBookingLinks({
-                    ...params,
-                    kind: activity.booking.kind as BookingKind,
-                    searchHint: typeof params.searchHint === "string" ? params.searchHint : "",
-                  })
-                : [],
-          },
-        };
-      }),
-    };
-  });
+  const itinerary = trip.itinerary.map((day) => ({
+    ...day,
+    activities: day.activities.map((activity) => {
+      const { params, city } = places.get(activity.id) ?? { params: {} };
+      const candidateName = typeof params.candidateName === "string" ? params.candidateName : undefined;
+      return {
+        ...activity,
+        // "See what people say" (Google / Reddit) -- deterministic URLs, never model-written.
+        research: buildResearchLinks({
+          title: activity.title,
+          candidateName,
+          destination: city,
+          kind: activity.booking?.kind,
+        }),
+        booking: activity.booking && {
+          ...activity.booking,
+          links:
+            activity.booking.status === "LINK_OUT" ||
+            // Fallback links only on AI-mode trips: legacy (pre-link) rows only
+            // stored a hint, so their links would lack dates and destination.
+            (trip.bookingMode === "AI" && !NO_LINKS.has(activity.booking.status))
+              ? buildBookingLinks({
+                  ...params,
+                  kind: activity.booking.kind as BookingKind,
+                  searchHint: typeof params.searchHint === "string" ? params.searchHint : "",
+                })
+              : [],
+        },
+      };
+    }),
+  }));
 
   const [budget, unread] = await Promise.all([
     getBudgetStatus(trip.id),

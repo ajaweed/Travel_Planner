@@ -1,149 +1,119 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_COLD_LOOKUPS_PER_MINUTE,
   buildSrcSet,
   candidateTitles,
-  getDestinationPhoto,
+  distanceKm,
+  getPlaceResults,
   lookupDestinationPhoto,
+  lookupDestinationPhotos,
   photoCacheKey,
   placeLabel,
   plainText,
   resetDestinationPhotoCache,
   type DestinationPhoto,
+  type PlaceResult,
 } from "./destinationPhoto";
+import { WikimediaUnavailable, setWikimediaFetch } from "./wikimedia";
+import { fakeWikimedia, type FakeWiki } from "./__fixtures__/fakeWikimedia";
 
-type PageImages = Record<string, { pageimage?: string; missing?: boolean; disambiguation?: boolean }>;
-type Files = Record<string, { mime?: string; repo?: string; license?: string; nonFree?: boolean; artist?: string }>;
-
-function fakeFetch(pages: PageImages, files: Files) {
-  const calls: string[] = [];
-  const fn = async (url: string) => {
-    calls.push(url);
-    const title = new URL(url).searchParams.get("titles")!;
-    if (title.startsWith("File:")) {
-      const f = files[title.slice(5)];
-      const page = f
-        ? {
-            imagerepository: f.repo ?? "shared",
-            imageinfo: [
-              {
-                mime: f.mime ?? "image/jpeg",
-                thumburl: `https://upload.wikimedia.org/thumb/${title.slice(5)}`,
-                thumbwidth: 1600,
-                thumbheight: 1000,
-                descriptionurl: `https://commons.wikimedia.org/wiki/${title}`,
-                extmetadata: {
-                  Artist: { value: f.artist ?? '<a href="https://x">Ana Silva</a>' },
-                  LicenseShortName: { value: f.license ?? "CC BY-SA 4.0" },
-                  LicenseUrl: { value: "https://creativecommons.org/licenses/by-sa/4.0" },
-                  ...(f.nonFree ? { NonFree: { value: "true" } } : {}),
-                },
-              },
-            ],
-          }
-        : { missing: true };
-      return { ok: true, json: async () => ({ query: { pages: [page] } }) };
-    }
-    const p = pages[title];
-    const page = p
-      ? { title, pageimage: p.pageimage, missing: p.missing, pageprops: p.disambiguation ? { disambiguation: "" } : {} }
-      : { title, missing: true };
-    return { ok: true, json: async () => ({ query: { pages: [page] } }) };
-  };
-  return { fn, calls };
+function use(wiki: FakeWiki) {
+  const fake = fakeWikimedia(wiki);
+  setWikimediaFetch(fake.fn);
+  return fake;
 }
 
-describe("lookupDestinationPhoto", () => {
-  it("returns a credited photo for a freely licensed lead image", async () => {
-    const { fn } = fakeFetch({ Lisbon: { pageimage: "Lisboa_view.jpg" } }, { "Lisboa_view.jpg": {} });
-    const photo = await lookupDestinationPhoto("Lisbon", fn);
-    expect(photo).toMatchObject({
+afterEach(() => setWikimediaFetch(null));
+
+describe("lookupDestinationPhotos", () => {
+  it("returns a credited photo and coordinates", async () => {
+    use({ wikipedia: { Lisbon: { image: "Lisboa.jpg", coords: [38.7, -9.1] } }, files: { "Lisboa.jpg": {} } });
+    const r = (await lookupDestinationPhotos(["Lisbon"])).get("Lisbon")!;
+    expect(r.coords).toEqual({ lat: 38.7, lon: -9.1 });
+    expect(r.photo).toMatchObject({
       place: "Lisbon",
+      subject: "Lisbon",
       author: "Ana Silva",
       license: "CC BY-SA 4.0",
-      licenseUrl: "https://creativecommons.org/licenses/by-sa/4.0",
-      sourceUrl: "https://commons.wikimedia.org/wiki/File:Lisboa_view.jpg",
+      sourceUrl: "https://commons.wikimedia.org/wiki/File:Lisboa.jpg",
     });
   });
 
-  it("falls back from 'City, Country' to the city name", async () => {
-    const { fn, calls } = fakeFetch({ Lisbon: { pageimage: "Lisboa_view.jpg" } }, { "Lisboa_view.jpg": {} });
-    expect(await lookupDestinationPhoto("Lisbon, Portugal", fn)).not.toBeNull();
-    // Both sources in parallel per title: "Lisbon, Portugal" x2 misses, then "Lisbon" x2 + a file lookup each.
-    expect(calls).toHaveLength(6);
-    expect(calls.slice(0, 2).every((u) => new URL(u).searchParams.get("titles") === "Lisbon, Portugal")).toBe(true);
+  it("batches: many places cost one page request and one file request", async () => {
+    const fake = use({
+      wikipedia: { Lisbon: { image: "L.jpg" }, Kyoto: { image: "K.jpg" }, Dubai: { image: "D.jpg" } },
+      files: { "L.jpg": {}, "K.jpg": {}, "D.jpg": {} },
+    });
+    const r = await lookupDestinationPhotos(["Lisbon", "Kyoto", "Dubai"]);
+    expect([...r.values()].every((x) => x.photo)).toBe(true);
+    expect(fake.calls).toHaveLength(2);
   });
 
-  it("falls back to Wikivoyage when Wikipedia's lead image is unusable", async () => {
-    const wp = fakeFetch({ Dubai: { pageimage: "Tower.jpg" } }, { "Tower.jpg": { repo: "local" } });
-    const wv = fakeFetch({ Dubai: { pageimage: "Creek.jpg" } }, { "Creek.jpg": {} });
-    const fn = (url: string) => (url.includes("wikivoyage") ? wv.fn(url) : wp.fn(url));
-    const photo = await lookupDestinationPhoto("Dubai", fn);
-    expect(photo?.sourceUrl).toBe("https://commons.wikimedia.org/wiki/File:Creek.jpg");
+  it("falls back from 'City, Country' to the city, and follows redirects", async () => {
+    use({
+      wikipedia: { Lisbon: { redirectTo: "Lisboa" }, Lisboa: { image: "L.jpg" } },
+      files: { "L.jpg": {} },
+    });
+    const r = (await lookupDestinationPhotos(["Lisbon, Portugal"])).get("Lisbon, Portugal")!;
+    expect(r.photo?.subject).toBe("Lisboa");
+  });
+
+  it("falls back to Wikivoyage when Wikipedia's image is unusable, keeping Wikipedia's coordinates", async () => {
+    use({
+      wikipedia: { Dubai: { image: "Tower.jpg", coords: [25.2, 55.3] } },
+      wikivoyage: { Dubai: { image: "Creek.jpg" } },
+      files: { "Tower.jpg": { repo: "local" }, "Creek.jpg": {} },
+    });
+    const r = (await lookupDestinationPhotos(["Dubai"])).get("Dubai")!;
+    expect(r.photo?.sourceUrl).toContain("Creek.jpg");
+    expect(r.coords).toEqual({ lat: 25.2, lon: 55.3 });
   });
 
   it.each([
     ["a flag", "Flag_of_Portugal.jpg", {}],
     ["a map", "Patagonia_map.jpg", {}],
-    ["an SVG", "Skyline.svg", { mime: "image/svg+xml" }],
-    ["a PNG diagram", "Skyline.png", { mime: "image/png" }],
-    ["a non-free file", "Poster.jpg", { license: "Fair use", repo: "local" }],
+    ["an SVG", "Skyline.svgz", { mime: "image/svg+xml" }],
+    ["a PNG", "Skyline.png", { mime: "image/png" }],
+    ["a wiki-local file", "Poster.jpg", { repo: "local" }],
     ["a NonFree-flagged file", "Poster.jpg", { nonFree: true }],
     ["an all-rights-reserved file", "Poster.jpg", { license: "All rights reserved" }],
     ["a NonCommercial license", "Poster.jpg", { license: "CC BY-NC-SA 2.0" }],
     ["a NoDerivatives license", "Poster.jpg", { license: "CC BY-ND 4.0" }],
   ])("rejects %s", async (_label, name, file) => {
-    const { fn } = fakeFetch({ Place: { pageimage: name } }, { [name]: file });
-    expect(await lookupDestinationPhoto("Place", fn)).toBeNull();
+    use({ wikipedia: { Place: { image: name } }, files: { [name]: file } });
+    expect(await lookupDestinationPhoto("Place")).toBeNull();
   });
 
   it("accepts public domain and CC0", async () => {
     for (const license of ["Public domain", "CC0"]) {
-      const { fn } = fakeFetch({ Kyoto: { pageimage: "K.jpg" } }, { "K.jpg": { license } });
-      expect((await lookupDestinationPhoto("Kyoto", fn))?.license).toBe(license);
+      use({ wikipedia: { Kyoto: { image: "K.jpg" } }, files: { "K.jpg": { license } } });
+      expect((await lookupDestinationPhoto("Kyoto"))?.license).toBe(license);
     }
   });
 
   it("skips disambiguation pages and missing articles", async () => {
-    const { fn } = fakeFetch({ Springfield: { pageimage: "S.jpg", disambiguation: true } }, { "S.jpg": {} });
-    expect(await lookupDestinationPhoto("Springfield", fn)).toBeNull();
-    expect(await lookupDestinationPhoto("Nowhere-ville", fn)).toBeNull();
+    use({ wikipedia: { Springfield: { image: "S.jpg", disambiguation: true } }, files: { "S.jpg": {} } });
+    expect(await lookupDestinationPhoto("Springfield")).toBeNull();
+    expect(await lookupDestinationPhoto("Nowhere-ville")).toBeNull();
   });
 
-  it("a failure at one source doesn't stop the other (review fix)", async () => {
-    const wv = fakeFetch({ Lisbon: { pageimage: "L.jpg" } }, { "L.jpg": {} });
-    const fn = async (url: string) => {
-      if (url.includes("wikipedia")) throw new Error("timeout");
-      return wv.fn(url);
-    };
-    expect(await lookupDestinationPhoto("Lisbon", fn)).not.toBeNull();
+  it("throws WikimediaUnavailable when rate-limited (callers must not cache it)", async () => {
+    const fake = use({ wikipedia: { Lisbon: { image: "L.jpg" } }, files: { "L.jpg": {} } });
+    fake.failAll(429);
+    await expect(lookupDestinationPhotos(["Lisbon"])).rejects.toBeInstanceOf(WikimediaUnavailable);
+    expect(await lookupDestinationPhoto("Lisbon")).toBeNull();
   });
 
-  it("asks fetch not to cache (Next's fetch cache would ignore our TTLs)", async () => {
-    const inits: unknown[] = [];
-    await lookupDestinationPhoto("Lisbon", async (_u, init) => {
-      inits.push(init);
-      return { ok: false, json: async () => ({}) };
-    });
-    expect(inits.length).toBeGreaterThan(0);
-    expect(inits.every((i) => (i as { cache?: string }).cache === "no-store")).toBe(true);
-  });
-
-  it("never throws: network errors and bad JSON give null", async () => {
-    expect(await lookupDestinationPhoto("Lisbon", async () => { throw new Error("offline"); })).toBeNull();
-    expect(await lookupDestinationPhoto("Lisbon", async () => ({ ok: true, json: async () => null }))).toBeNull();
-    expect(await lookupDestinationPhoto("Lisbon", async () => ({ ok: false, json: async () => ({}) }))).toBeNull();
-  });
-
-  it("falls back to 'Unknown author' when Commons has none", async () => {
-    const { fn } = fakeFetch({ Lisbon: { pageimage: "L.jpg" } }, { "L.jpg": { artist: "" } });
-    expect((await lookupDestinationPhoto("Lisbon", fn))?.author).toBe("Unknown author");
+  it("falls back to 'Unknown author'", async () => {
+    use({ wikipedia: { Lisbon: { image: "L.jpg" } }, files: { "L.jpg": { artist: "" } } });
+    expect((await lookupDestinationPhoto("Lisbon"))?.author).toBe("Unknown author");
   });
 });
 
-describe("getDestinationPhoto cache", () => {
+describe("getPlaceResults cache", () => {
   const photo = (place: string): DestinationPhoto => ({
     place,
+    subject: place,
     src: "https://x/1.jpg",
     srcSet: "",
     width: 1,
@@ -152,53 +122,94 @@ describe("getDestinationPhoto cache", () => {
     license: "CC0",
     sourceUrl: "https://commons.wikimedia.org/wiki/File:1.jpg",
   });
+  const found = async (places: string[]) =>
+    new Map<string, PlaceResult>(places.map((p) => [p, { photo: photo(p) }]));
 
   beforeEach(() => resetDestinationPhotoCache());
 
   it("looks a place up once and gives each caller its own spelling", async () => {
-    const lookup = vi.fn(async (p: string) => photo(p));
-    expect((await getDestinationPhoto("lisbon", lookup))?.place).toBe("lisbon");
-    expect((await getDestinationPhoto(" Lisbon ", lookup))?.place).toBe("Lisbon");
+    const lookup = vi.fn(found);
+    expect((await getPlaceResults(["lisbon"], { lookup })).get("lisbon")?.photo?.place).toBe("lisbon");
+    expect((await getPlaceResults([" Lisbon "], { lookup })).get("Lisbon")?.photo?.place).toBe("Lisbon");
     expect(lookup).toHaveBeenCalledTimes(1);
   });
 
-  it("retries misses after 10 minutes, hits after a day", async () => {
-    const lookup = vi.fn(async () => null);
-    await getDestinationPhoto("Nowhere", lookup, 0);
-    await getDestinationPhoto("Nowhere", lookup, 9 * 60_000);
+  it("batches the uncached places of one call into one lookup", async () => {
+    const lookup = vi.fn(found);
+    await getPlaceResults(["A"], { lookup });
+    await getPlaceResults(["A", "B", "C", "b"], { lookup });
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(lookup.mock.calls[1]![0]).toEqual(["B", "C"]);
+  });
+
+  it("retries misses after 10 minutes", async () => {
+    const lookup = vi.fn(async (ps: string[]) => new Map<string, PlaceResult>(ps.map((p) => [p, { photo: null }])));
+    await getPlaceResults(["Nowhere"], { lookup, now: 0 });
+    await getPlaceResults(["Nowhere"], { lookup, now: 9 * 60_000 });
     expect(lookup).toHaveBeenCalledTimes(1);
-    await getDestinationPhoto("Nowhere", lookup, 11 * 60_000);
+    await getPlaceResults(["Nowhere"], { lookup, now: 11 * 60_000 });
     expect(lookup).toHaveBeenCalledTimes(2);
   });
 
-  it("caps uncached lookups per minute, without caching the refusal", async () => {
-    const lookup = vi.fn(async (p: string) => photo(p));
-    for (let i = 0; i < MAX_COLD_LOOKUPS_PER_MINUTE; i++) await getDestinationPhoto(`place ${i}`, lookup, 1000);
-    expect(await getDestinationPhoto("one too many", lookup, 1000)).toBeNull();
-    expect(lookup).toHaveBeenCalledTimes(MAX_COLD_LOOKUPS_PER_MINUTE);
-    // Cached places still answer, and a new minute allows the refused one.
-    expect(await getDestinationPhoto("place 0", lookup, 1000)).not.toBeNull();
-    expect(await getDestinationPhoto("one too many", lookup, 62_000)).not.toBeNull();
+  it("concurrent callers share one in-flight lookup (review fix)", async () => {
+    const lookup = vi.fn(async (ps: string[]) => {
+      await new Promise((r) => setTimeout(r, 10));
+      return found(ps);
+    });
+    const [a, b] = await Promise.all([getPlaceResults(["Lisbon"], { lookup }), getPlaceResults(["lisbon", "Kyoto"], { lookup })]);
+    expect(a.get("Lisbon")?.photo?.place).toBe("Lisbon");
+    expect(b.get("lisbon")?.photo?.place).toBe("lisbon");
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(lookup.mock.calls[1]![0]).toEqual(["Kyoto"]);
+  });
+
+  it("the cap applies only to capped (public) callers, and is refunded when Wikimedia is unavailable", async () => {
+    const lookup = vi.fn(found);
+    const many = Array.from({ length: MAX_COLD_LOOKUPS_PER_MINUTE + 5 }, (_, i) => `p${i}`);
+    const r = await getPlaceResults(many, { lookup, now: 1000 });
+    expect([...r.values()].every((x) => x.photo)).toBe(true);
+
+    resetDestinationPhotoCache();
+    const failing = vi.fn(async (): Promise<Map<string, PlaceResult>> => {
+      throw new WikimediaUnavailable("429");
+    });
+    await getPlaceResults(many.slice(0, MAX_COLD_LOOKUPS_PER_MINUTE), { lookup: failing, now: 1000, capped: true });
+    const after = await getPlaceResults(["fresh"], { lookup, now: 1000, capped: true });
+    expect(after.get("fresh")?.photo).not.toBeNull();
+  });
+
+  it("doesn't cache when Wikimedia is unavailable", async () => {
+    const lookup = vi.fn(async (): Promise<Map<string, PlaceResult>> => {
+      throw new WikimediaUnavailable("429");
+    });
+    expect((await getPlaceResults(["Lisbon"], { lookup })).get("Lisbon")).toEqual({ photo: null });
+    await getPlaceResults(["Lisbon"], { lookup });
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it("caps new places per minute, without caching the refusal", async () => {
+    const lookup = vi.fn(found);
+    const many = Array.from({ length: MAX_COLD_LOOKUPS_PER_MINUTE + 5 }, (_, i) => `place ${i}`);
+    const r = await getPlaceResults(many, { lookup, now: 1000, capped: true });
+    expect([...r.values()].filter((x) => x.photo)).toHaveLength(MAX_COLD_LOOKUPS_PER_MINUTE);
+    expect((await getPlaceResults(["place 0"], { lookup, now: 2000, capped: true })).get("place 0")?.photo).not.toBeNull();
+    expect((await getPlaceResults([many.at(-1)!], { lookup, now: 62_000, capped: true })).get(many.at(-1)!)?.photo).not.toBeNull();
   });
 });
 
 describe("helpers", () => {
-  it("placeLabel and photoCacheKey", () => {
-    expect(placeLabel("Lisbon, Portugal")).toBe("Lisbon");
-    expect(placeLabel(", odd")).toBe(", odd");
-    expect(photoCacheKey("  Lisbon ")).toBe("lisbon");
-  });
-
   it("plainText strips tags and entities", () => {
     expect(plainText('<a href="x">Vitor&nbsp;Oliveira</a> from <b>Torres &amp; Vedras</b>')).toBe(
       "Vitor Oliveira from Torres & Vedras",
     );
   });
 
-  it("candidateTitles", () => {
+  it("candidateTitles / placeLabel / photoCacheKey", () => {
     expect(candidateTitles(" Lisbon, Portugal ")).toEqual(["Lisbon, Portugal", "Lisbon"]);
     expect(candidateTitles("Kyoto")).toEqual(["Kyoto"]);
     expect(candidateTitles("  ")).toEqual([]);
+    expect(placeLabel("Lisbon, Portugal")).toBe("Lisbon");
+    expect(photoCacheKey("  Lisbon ")).toBe("lisbon");
   });
 
   it("buildSrcSet swaps the thumbnail width and keeps the query", () => {
@@ -207,9 +218,13 @@ describe("helpers", () => {
     expect(set).toHaveLength(4);
     expect(set[0]).toBe("https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f2/A_%28b%29.jpg/500px-A_%28b%29.jpg?utm_source=x 500w");
     expect(set[3]).toBe(`${src} 1920w`);
+    expect(buildSrcSet("https://upload.wikimedia.org/wikipedia/commons/f/f2/A.jpg")).toBe("");
   });
 
-  it("buildSrcSet gives up on URLs that aren't thumbnails", () => {
-    expect(buildSrcSet("https://upload.wikimedia.org/wikipedia/commons/f/f2/A.jpg")).toBe("");
+  it("distanceKm", () => {
+    // Lisbon -> Sintra is about 25 km.
+    const d = distanceKm({ lat: 38.7223, lon: -9.1393 }, { lat: 38.8029, lon: -9.3817 });
+    expect(d).toBeGreaterThan(20);
+    expect(d).toBeLessThan(30);
   });
 });
