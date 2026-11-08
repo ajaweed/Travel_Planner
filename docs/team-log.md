@@ -345,3 +345,101 @@ simulated 20-min stall -> one page load reaped it to FAILED with links. 60 tests
 typecheck, build pass. Merged to `main` and pushed. Reviewed by `/code-review`.
 **For ux-designer:** visual-design.md §4.9's small link on SEARCHING rows conflicts with
 the no-links-while-searching decision above -- please drop it when next revising.
+**2026-11-08 -- ux-designer** -- Starting `ux-designer/visual-refresh`. Product owner
+ran the app and called it "so bland". For this task my remit extends from flows to
+*visual direction*: writing `docs/visual-design.md` -- concrete Tailwind tokens (palette
+with verified WCAG AA contrast, next/font typography, spacing/radius/shadow, motion),
+a page-by-page treatment of every existing page/component in `apps/web`, an imagery
+policy, and a prioritized checklist for `frontend-dev`. Doc only -- no app code on
+this branch, so it can't collide with the in-flight `backend-dev/current-date-context`.
+
+**2026-11-08 -- ux-designer** -- Finished `ux-designer/visual-refresh` (doc only, not
+merged). Wrote `docs/visual-design.md` ("Golden Hour" direction) and linked it from
+`docs/architecture.md` (package boundaries + decisions log). It moves the app from the
+dark-neutral theme to a warm light one: `sand-50` page, `lagoon-600` (#0E6B66) as the
+single action/trust color, `sunset-600` accent, Fraunces display + Inter body via
+next/font, money always in tabular Inter. Every text/background pair is in a measured
+contrast table (all AA). Two findings from measuring: `ink-500` on `sand-200` fails
+(4.15), so it's banned, and input borders must use `sand-400` (3.36:1) rather than the
+decorative sand borders. Imagery: lucide-react icons, a sunrise gradient and an original
+contour SVG. No photos, no social proof.
+
+**Handoffs:**
+- **frontend-dev:** implement in the P0 -> P2 order in §6 of the doc. P0 is
+  tokens/fonts/primitives/StatusPill. P1 is landing (with new example-prompt chips that
+  fill-and-focus, never auto-submit), the options cards, BudgetBar and the clarification
+  card.
+- **backend-dev (blocking for tier colors):** the option variant key
+  (`value`/`balanced`/`elevated`) isn't persisted anywhere, and `persistOptions()`
+  compacts `optionIndex` when a variant fails, so index != tier. Carry `variant` through
+  `draftJson` and return it from `listItineraryOptions`. Until then, frontend-dev ships
+  neutral card headers. It must not guess a tier from index or price.
+- **revision-flow branch:** the persistent revise dock is specified visually (§4.3).
+  It must appear in every trip status, and no non-functional placeholder ships before the
+  endpoint exists.
+- **qa-tester:** state matrix at 375/1280px, with reduce-motion on, plus a keyboard-only
+  pass.
+Kept intact: "No rating available" honesty copy (now `text-sm`, deliberately not
+styled like a low rating), all existing state copy, and the status-gating logic.
+
+**2026-11-08 -- ux-designer** -- Revised `docs/visual-design.md` on
+`ux-designer/visual-refresh` for the owner's product change: **the app no longer books
+anything.** What changed in the spec:
+- **Retired:** per-booking status pills, booking banners, BOOKING_CONFIRMED/FAILED
+  notification tiles, payment UI, and every "we book" line of copy. Landing, options
+  header and footnotes now say "We never book or charge anything" / "book each piece
+  yourself".
+- **New §4.7 `BookLink`:** a real `<a target="_blank" rel="noopener noreferrer">`
+  styled as a secondary button. Text is "Search on {Provider}" plus the lucide
+  `ExternalLink` icon and sr-only "(opens in a new tab)". It says "Search", not "Book
+  now", because it's a prefilled search. There's an optional "what this searches for"
+  line. When no deterministic link exists, it shows honest no-link text naming the
+  missing detail. Never a model-made URL.
+- **BudgetBar** is estimate-only: "~" figures, a striped fill (stripes = estimate), an
+  always-visible "not live prices" footnote, and a *warning* (not danger) tone when the
+  estimate exceeds budget.
+- The post-choice pill reads "Plan ready", never "Confirmed"/"Booked".
+- **New §4.8 (optional/v2):** a per-day "Things to book" checklist the user ticks.
+  Checked rows say "You marked this booked", with no strikethrough and no green
+  "Booked" pill. Persistence (API field vs localStorage) is a backend-dev call.
+
+**backend-dev:** for each bookable item the UI needs a provider display name, the URL
+(or an explicit missing-link reason) and optionally a short search summary. It also needs
+the chosen option's estimate for the budget bar and the name of the post-choice trip
+status. Variant-key persistence is still needed for tier colors.
+
+**2026-11-08 -- ux-designer** -- Revised `docs/visual-design.md` again on
+`ux-designer/visual-refresh`: **booking is now the user's choice** (SELF link-out by
+default, or AI booking). What changed:
+- **Booking-mode radio cards** sit above the options grid, in a native fieldset with
+  SELF as the default.
+  - The AI card has a caveat slot with three states: test (now: "Booking providers aren't
+    connected yet. The AI will try in test mode, and anything it can't book falls back to
+    links."), live, and unavailable.
+  - The test caveat is visible before the user selects AI.
+  - The "Choose" button label follows the mode ("Choose and start booking" in AI mode).
+- **Status pills:** SELF goes to READY_TO_BOOK "Plan ready" (lagoon, deliberately not
+  success-green). AI goes BOOKING, then CONFIRMED (shown as "Confirmed (test)" in test
+  mode) or NEEDS_ATTENTION.
+- **Per-item states return for AI mode only** (new §4.9):
+  - SEARCHING, BOOKED with a confirmation ref and copy button, AWAITING_CONFIRMATION
+    with the reason in plain words, and FAILED as "Not booked: {reason}".
+  - Every item that isn't BOOKED shows the "Book it yourself instead" fallback.
+  - Test-mode bookings say "Test booking, not a real reservation".
+- **BudgetBar has two modes.** SELF is estimate-only, as before. AI shows solid committed
+  plus striped pending, with the plan estimate as a labelled marker. Over budget is danger
+  in AI mode and warning in SELF mode. The test-mode footnote says "Nothing has been
+  charged."
+- **Notifications:** booking notifications are back for AI mode, with a "Test" chip and
+  deep links to the affected row.
+- **Out of scope:** payment-method collection for *live* AI booking needs its own design
+  pass before any provider leaves sandbox.
+
+**backend-dev:** the UI needs these exposed:
+- The booking mode and a provider-readiness flag (test / live / unavailable).
+- The confirmation reference.
+- A human-readable AWAITING_CONFIRMATION reason.
+
+Please also decide whether approve/skip actions exist. Flagged risk: the fallback link on
+SEARCHING items could lead to a double booking, and there's no "I booked this myself,
+stop" control yet.
