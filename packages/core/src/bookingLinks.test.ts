@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBookingLinks, linksForStoredBooking, type LinkSearchParams } from "./bookingLinks";
+import { buildBookingLinks, destinationFor, linksForStoredBooking, type LinkSearchParams } from "./bookingLinks";
 
 const base = {
   originCity: "Detroit (DTW)",
@@ -139,5 +139,62 @@ describe("query quality", () => {
     expect(out[0]!.note).toBeUndefined();
     expect(ret[0]!.note).toMatch(/round-trip/);
     expect(ret[0]!.url).toBe(out[0]!.url);
+  });
+});
+
+describe("review fixes", () => {
+  it("gives a mid-trip flight its own one-way search instead of the round trip", () => {
+    const [link] = buildBookingLinks({
+      ...base,
+      kind: "FLIGHT",
+      searchHint: "Flight Barcelona BCN to Madrid MAD on 2027-03-17",
+      date: "2027-03-17",
+    });
+    expect(param(link!.url, "q")).toBe("Flight Barcelona BCN to Madrid MAD on 2027-03-17");
+    expect(link!.note).toBeUndefined();
+  });
+
+  it("only labels a final-day flight as the return leg", () => {
+    const [ret] = buildBookingLinks({ ...base, kind: "FLIGHT", searchHint: "x", date: "2027-03-19" });
+    expect(ret!.note).toMatch(/round-trip/);
+  });
+
+  it("doesn't claim a round trip when the return search can't be built", () => {
+    const [ret] = buildBookingLinks({
+      kind: "FLIGHT",
+      searchHint: "Flight BCN to DTW on 2027-03-19",
+      startDate: "2027-03-15",
+      endDate: "2027-03-19",
+      date: "2027-03-19",
+    });
+    expect(ret!.note).toBeUndefined();
+  });
+
+  it.each(["null", "42", "[1,2]", '"str"'])("survives stored JSON %s without throwing", (raw) => {
+    expect(() => linksForStoredBooking("HOTEL", raw)).not.toThrow();
+  });
+
+  it("reuses the maps builder for unknown kinds", () => {
+    const [link] = buildBookingLinks({ kind: "RESERVATION", searchHint: "Cal Pep Barcelona" });
+    expect(link!.provider).toBe("Google Maps");
+    expect(param(link!.url, "query")).toBe("Cal Pep Barcelona");
+  });
+});
+
+describe("destinationFor", () => {
+  it("always uses the only destination on single-city trips", () => {
+    expect(destinationFor(["Barcelona"], "Prado Museum tour")).toBe("Barcelona");
+  });
+
+  it("picks the destination the item mentions on multi-city trips", () => {
+    expect(destinationFor(["Barcelona", "Madrid"], undefined, "Prado tour", "Prado Museum tour in Madrid on 2027-03-18")).toBe("Madrid");
+  });
+
+  it("matches on the leading place name and is case-insensitive", () => {
+    expect(destinationFor(["Barcelona, Spain", "Madrid, Spain"], "skip-the-line PRADO, madrid")).toBe("Madrid, Spain");
+  });
+
+  it("returns undefined rather than guessing when no destination is mentioned", () => {
+    expect(destinationFor(["Barcelona", "Madrid"], "Flamenco show")).toBeUndefined();
   });
 });

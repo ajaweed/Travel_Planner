@@ -54,8 +54,17 @@ function flightLinks(p: LinkSearchParams): BookingLink[] {
   // Google Flights' `q` takes natural language and parses origin,
   // destination and dates itself -- far more robust than its encoded `tfs`
   // parameter, which is undocumented.
+  // Itineraries carry an outbound flight on the first day and a return on the
+  // last day, and people book those together as one round trip. Any other
+  // flight (a mid-trip leg between cities) is its own one-way search, built
+  // from the agent's hint, which the itinerary prompt requires to name both
+  // endpoints and the date.
+  const isOutbound = !isDate(p.date) || p.date === p.startDate;
+  const isReturnLeg = isDate(p.date) && isDate(p.endDate) && p.date === p.endDate && !isOutbound;
+  const isRoundTrip = isOutbound || isReturnLeg;
+
   let q: string;
-  if (p.originCity && p.destination) {
+  if (isRoundTrip && p.originCity && p.destination) {
     q = `Flights from ${p.originCity} to ${p.destination}`;
     if (isDate(p.startDate)) q += ` on ${p.startDate}`;
     if (isDate(p.endDate)) q += ` returning ${p.endDate}`;
@@ -64,15 +73,13 @@ function flightLinks(p: LinkSearchParams): BookingLink[] {
     // itinerary prompt requires to contain origin, destination and date.
     q = p.searchHint;
   }
-  // Itineraries carry an outbound and a return flight item, but people book
-  // them together; both get the same round-trip search, and the return leg
-  // says so rather than looking like a second, separate purchase.
-  const isReturnLeg = isDate(p.date) && isDate(p.startDate) && p.date !== p.startDate;
   return [
     {
       provider: "Google Flights",
       url: url("https://www.google.com/travel/flights", { q }),
-      ...(isReturnLeg ? { note: "Same round-trip search as your outbound flight" } : {}),
+      ...(isReturnLeg && p.originCity && p.destination
+        ? { note: "Same round-trip search as your outbound flight" }
+        : {}),
     },
   ];
 }
@@ -122,9 +129,13 @@ function tourLinks(p: LinkSearchParams): BookingLink[] {
   ];
 }
 
-function mapLink(p: LinkSearchParams): BookingLink[] {
-  if (!p.candidateName) return [];
-  const query = p.destination ? `${p.candidateName}, ${p.destination}` : p.candidateName;
+function mapLink(p: LinkSearchParams, fallbackQuery?: string): BookingLink[] {
+  if (!p.candidateName && !fallbackQuery) return [];
+  const query = p.candidateName
+    ? p.destination
+      ? `${p.candidateName}, ${p.destination}`
+      : p.candidateName
+    : fallbackQuery!;
   return [
     {
       provider: "Google Maps",
@@ -145,13 +156,25 @@ export function buildBookingLinks(p: LinkSearchParams): BookingLink[] {
     default:
       // RESERVATION is excluded from itineraries (no provider); if one ever
       // appears, a maps search on the hint is the most useful honest link.
-      return [
-        {
-          provider: "Google Maps",
-          url: url("https://www.google.com/maps/search/", { api: 1, query: p.searchHint }),
-        },
-      ];
+      return mapLink({ ...p, candidateName: undefined }, p.searchHint);
   }
+}
+
+/**
+ * Which of the trip's destinations an item is in. The itinerary agent doesn't
+ * tag days with a city, so on a multi-city trip we take the first destination
+ * the item's own text mentions; if none is mentioned we return undefined and
+ * let the builders fall back to the item's text, rather than wrongly pinning
+ * a Madrid tour to Barcelona. Single-destination trips always get that one.
+ */
+export function destinationFor(destinations: string[], ...texts: Array<string | undefined>): string | undefined {
+  if (destinations.length <= 1) return destinations[0];
+  const haystack = texts.filter(Boolean).join(" ").toLowerCase();
+  // Match on the leading place name ("Barcelona, Spain" -> "barcelona").
+  return destinations.find((d) => {
+    const name = d.split(",")[0]!.trim().toLowerCase();
+    return name.length > 0 && haystack.includes(name);
+  });
 }
 
 /**
@@ -161,7 +184,12 @@ export function buildBookingLinks(p: LinkSearchParams): BookingLink[] {
 export function linksForStoredBooking(kind: string, searchParamsJson: string): BookingLink[] {
   let stored: Partial<LinkSearchParams> = {};
   try {
-    stored = JSON.parse(searchParamsJson);
+    const parsed: unknown = JSON.parse(searchParamsJson);
+    // JSON.parse happily returns null, numbers or arrays; only a plain object
+    // is usable, and anything else must not take down the trip page.
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      stored = parsed as Partial<LinkSearchParams>;
+    }
   } catch {
     // Fall through with empty params rather than failing the whole trip page.
   }

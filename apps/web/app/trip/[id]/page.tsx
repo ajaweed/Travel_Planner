@@ -159,6 +159,9 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const settingUp =
     (trip.status === "READY_TO_BOOK" || trip.status === "BOOKING") && trip.itinerary.length === 0;
   const readyToBook = trip.status === "READY_TO_BOOK" && trip.itinerary.length > 0;
+  const hasLinks = trip.itinerary.some((day: any) =>
+    day.activities.some((a: any) => a.booking?.status === "LINK_OUT"),
+  );
   const chosenLabel = options?.find((o) => o.id === choosingId)?.label;
   const planningFailed =
     trip.status === "NEEDS_ATTENTION" && trip.itinerary.length === 0 && !isChoosing;
@@ -263,7 +266,12 @@ export default function TripPage({ params }: { params: { id: string } }) {
           Setting up {chosenLabel ? `“${chosenLabel}”` : "your plan"}…
         </p>
       )}
-      {readyToBook && (
+      {readyToBook && !hasLinks && (
+        <p className="mt-6 text-sm text-neutral-400">
+          Your plan is set. Nothing in it needs booking.
+        </p>
+      )}
+      {readyToBook && hasLinks && (
         <div className="mt-6 rounded-xl border border-emerald-800 bg-emerald-950/40 p-4">
           <p className="text-sm font-medium text-emerald-200">Your plan is ready to book.</p>
           <p className="mt-1 text-sm text-neutral-400">
@@ -275,7 +283,8 @@ export default function TripPage({ params }: { params: { id: string } }) {
       )}
       {trip.status === "BOOKING" && trip.itinerary.length > 0 && (
         <p className="mt-6 text-sm text-neutral-400">
-          Plan locked in — booking flights, hotels, and activities…
+          This trip was planned before the app switched to booking links, so it has no
+          links. Plan a new trip to get them.
         </p>
       )}
 

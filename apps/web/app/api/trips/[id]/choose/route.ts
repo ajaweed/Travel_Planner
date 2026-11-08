@@ -20,9 +20,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   try {
-    // Runs the full booking pass before returning, exactly as the previous
-    // single-itinerary flow did. The trip flips to BOOKING immediately, so the
-    // dashboard's poll shows progress while this request is still in flight.
+    // Locks in the plan (CHOOSING -> READY_TO_BOOK) and writes its days and
+    // link-out bookings. Nothing is booked: the user books each item via the
+    // links on the trip page. Fast -- no agent calls happen here.
     await selectItineraryOption(params.id, body.optionId);
     return NextResponse.json({ ok: true });
   } catch (err) {

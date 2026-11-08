@@ -27,13 +27,18 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       ...activity,
       booking: activity.booking && {
         ...activity.booking,
-        links: linksForStoredBooking(activity.booking.kind, activity.booking.searchParamsJson),
+        links:
+          activity.booking.status === "LINK_OUT"
+            ? linksForStoredBooking(activity.booking.kind, activity.booking.searchParamsJson)
+            : [],
       },
     })),
   }));
 
-  const budget = await getBudgetStatus(trip.id);
-  const unread = await getUnreadNotifications(trip.id);
+  const [budget, unread] = await Promise.all([
+    getBudgetStatus(trip.id),
+    getUnreadNotifications(trip.id),
+  ]);
 
   return NextResponse.json({ trip: { ...trip, itinerary }, budget, unreadCount: unread.length });
 }

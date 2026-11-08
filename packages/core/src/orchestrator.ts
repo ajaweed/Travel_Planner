@@ -11,7 +11,7 @@
 import { prisma } from "@trip-planner/db";
 import { runConciergeAgent } from "./agents/conciergeAgent";
 import { ITINERARY_VARIANTS, runItineraryAgent } from "./agents/itineraryAgent";
-import { type LinkSearchParams } from "./bookingLinks";
+import { destinationFor, type LinkSearchParams } from "./bookingLinks";
 import { notify } from "./agents/notificationAgent";
 import { attachRealReviews } from "./reviewLookup";
 import type {
@@ -315,6 +315,11 @@ async function materializeItinerary(
   days: EnrichedItineraryDayDraft[],
 ): Promise<number> {
   let itemsToBook = 0;
+  const isoDate = (s: string | undefined) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined);
+  // The brief's dates are concierge output and normally ISO; the day dates
+  // are what the itinerary actually uses, so fall back to them per field.
+  const tripStart = isoDate(brief.startDate) ?? isoDate(days[0]?.date);
+  const tripEnd = isoDate(brief.endDate) ?? isoDate(days[days.length - 1]?.date);
 
   await prisma.$transaction(async (tx) => {
     await tx.itineraryOption.update({
@@ -347,9 +352,17 @@ async function materializeItinerary(
             candidateName: activity.bookable.candidateName,
             date: day.date,
             originCity: brief.originCity,
-            destination: brief.destinations[0],
-            startDate: brief.startDate,
-            endDate: brief.endDate ?? days[days.length - 1]?.date,
+            destination:
+              activity.bookable.kind === "FLIGHT"
+                ? brief.destinations[0] // the round trip is origin <-> the trip's (first) destination
+                : destinationFor(
+                    brief.destinations,
+                    activity.bookable.candidateName,
+                    activity.title,
+                    activity.bookable.searchHint,
+                  ),
+            startDate: tripStart,
+            endDate: tripEnd,
             partySize: brief.partySize,
           };
           const booking = await tx.booking.create({
