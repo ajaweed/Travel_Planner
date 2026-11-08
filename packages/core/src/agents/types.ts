@@ -157,6 +157,11 @@ export const BudgetStatusSchema = z.object({
   remainingCents: z.number().int(),
   currency: z.string(),
   overBudget: z.boolean(),
+  // The chosen plan's estimated total, or null before a plan is chosen. The
+  // app no longer books, so this estimate -- not real spend -- is what the
+  // budget bar shows; actual prices are whatever the user pays on the
+  // provider sites.
+  estimatedCents: z.number().int().nullable(),
 });
 export type BudgetStatus = z.infer<typeof BudgetStatusSchema>;
 

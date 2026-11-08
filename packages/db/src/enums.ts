@@ -6,7 +6,8 @@ export type TripStatus =
   | "DRAFT"
   | "PLANNING"
   | "CHOOSING" // itinerary options generated; waiting on the user to pick one
-  | "BOOKING"
+  | "READY_TO_BOOK" // plan chosen; the user books each item themselves via links
+  | "BOOKING" // legacy: app-side booking, no longer entered (see bookingLinks.ts)
   | "CONFIRMED"
   | "NEEDS_ATTENTION"
   | "CANCELLED"
@@ -15,6 +16,7 @@ export type TripStatus =
 export type BookingKind = "FLIGHT" | "HOTEL" | "TOUR" | "RESERVATION";
 
 export type BookingStatus =
+  | "LINK_OUT" // the user books this themselves via search links; the app never books
   | "SEARCHING"
   | "OPTIONS_FOUND"
   | "AWAITING_CONFIRMATION"

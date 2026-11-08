@@ -252,3 +252,42 @@ findings: the itinerary prompt edit hadn't actually applied (real -- fixed in 07
 `partialBrief` possibly undefined (not real -- the schema requires it). Reviewed by
 `/code-review`. Handoff: none required; anyone adding a new agent that reasons about
 dates should take `todayISO()` from `tripDates.ts` rather than `new Date()` inline.
+
+**2026-11-08 -- backend-dev** -- FINISHED `backend-dev/link-out-booking`. Product owner
+changed direction: the app no longer books for the user; it gives links the user clicks to
+book each flight/hotel/tour themselves. What changed:
+- `selectItineraryOption` claims `CHOOSING -> READY_TO_BOOK` (new TripStatus; same
+  conditional-update lock, same release-on-failure), materializes the plan with
+  bookables as `LINK_OUT` Bookings (new BookingStatus), and does NOT run BookingAgent.
+  `runBookingPipeline` / `processBooking` / `finalizeTripStatus` are removed from the
+  orchestrator. BookingAgent, `bookingTools.ts` and the integrations adapters are left
+  on disk, unwired.
+- New `packages/core/src/bookingLinks.ts`: deterministic search-URL builder. Stored
+  params (kind, title, searchHint, candidateName, day date, origin, destination, trip
+  window, party size) live in `Booking.searchParamsJson`; `GET /api/trips/[id]` derives
+  `booking.links` at read time, so improving the builder fixes existing trips with no
+  migration. Legacy rows that only stored `{searchHint}` still get hint-based links.
+- Query-quality decisions from live runs: tours search on candidateName, then the short
+  activity title, never the agent's sentence-long hint (which contains dates and "morning"
+  and matches badly). Outbound and return flight items share one round-trip Google
+  Flights search; the return leg carries a note saying so.
+- `BudgetStatus.estimatedCents` = the SELECTED option's estimate; BudgetBar shows it with
+  a "~" and an "estimate, not a quote" line once a plan is chosen.
+- UI: `BookingLinks` pill links (new tab, `rel=noopener noreferrer`, aria-label per
+  provider), a "ready to book" explainer on the trip page, and all "we're booking" copy
+  removed. Styling is deliberately the current dark theme -- the Golden Hour restyle
+  (`ux-designer/visual-refresh`, its §4.7 `BookLink`) supersedes it.
+Verified: 15 new tests (44 total), typecheck, `npm run build -w apps/web`; live runs on
+Barcelona and Lisbon (plan -> choose 200 -> second choose 409 -> READY_TO_BOOK, 7 items
+with links). Google Flights/Hotels/Maps links return 200 and Booking.com 202 to curl;
+GetYourGuide and Viator 403 scripted requests (bot protection), so those two still need a
+real-browser click check -- qa-tester. Handoff: frontend-dev (restyle per visual spec);
+backend-dev still owes the option `variant` field the visual spec is blocked on.
+`/code-review` (medium) on `backend-dev/link-out-booking` raised 9 findings; 8 fixed in
+the follow-up commit (multi-city destination per item via `destinationFor`; only a
+final-day flight is the round-trip return, mid-trip legs get their own search; null-safe
+stored params; ISO fallback for trip dates; no links banner on nothing-to-book plans;
+legacy BOOKING copy; LINK_OUT-only link building + parallel queries; stale comments).
+Deliberately not done: deleting BookingAgent / `bookingTools.ts` / `recordBudgetEntry`
+-- kept unwired on purpose (decisions log). 56 tests, typecheck, build pass. Merged to
+`main` and pushed. Reviewed by `/code-review`.

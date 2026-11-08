@@ -183,7 +183,7 @@ export function ItineraryOptions({
           : `${options.length} ways to do this trip — pick one`}
       </h2>
       <p className="mt-1 text-sm text-neutral-500">
-        Nothing is booked until you choose.
+        Choosing a plan doesn’t book or charge anything — you’ll get links to book each piece yourself.
       </p>
 
       {error && (
@@ -270,7 +270,7 @@ export function ItineraryOptions({
                 disabled={disabled}
                 className="mt-4 w-full rounded-lg bg-white py-2 text-sm font-medium text-neutral-900 disabled:opacity-40"
               >
-                {isChoosing ? "Starting bookings…" : "Choose this plan"}
+                {isChoosing ? "Saving your plan…" : "Choose this plan"}
               </button>
             </li>
           );
@@ -279,7 +279,7 @@ export function ItineraryOptions({
 
       <div className="mt-3 space-y-1">
         <p className="text-xs text-neutral-500">
-          Estimates for comparison. Real prices come from the provider when we book.
+          Estimates for comparison. Real prices are on the booking sites we link you to.
         </p>
         {lookup && <ReviewNote lookup={lookup} />}
       </div>

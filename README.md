@@ -2,29 +2,35 @@
 
 Tell it what kind of trip you want — specific or "I don't know, surprise me" — and a
 pipeline of backend AI agents turns that into a few genuinely different day-by-day
-itineraries to choose between, then searches and books flights/hotels/tours against real
-provider APIs for the one you pick, tracks it all against your budget, and raises in-app
-notifications as things happen.
+itineraries to choose between. For the one you pick, it gives you a link for every
+flight, hotel and tour (Google Flights, Booking.com, Google Hotels, GetYourGuide, Viator,
+Google Maps) so you can **book each piece yourself** on the provider's own site. The app
+never books or charges anything.
 
 See `docs/architecture.md` for the full flow diagram, package boundaries, and a decisions
 log of which provider was picked for what and why.
 
 ## Status
 
-This is a working scaffold, not a finished, live-bookable product:
+This is a working scaffold:
 
-- The agent pipeline (Concierge → Itinerary → Booking → Budget → Notification) is fully
-  wired and runs real tool-use loops against Claude.
+- The planning pipeline (Concierge → Itinerary → options → links) is fully wired and runs
+  real tool-use loops against Claude. It works end to end with **only an Anthropic API
+  key** -- the booking links are plain public search URLs, no provider keys needed.
+- **Link-out booking (2026-11-08):** choosing a plan no longer runs the BookingAgent.
+  Each bookable item gets provider search links built deterministically from the trip's
+  structured data in `packages/core/src/bookingLinks.ts` -- never URLs written by the
+  model. The budget bar shows the chosen plan's *estimate*; real prices are whatever you
+  see on the provider sites.
 - Planning is two-stage: you get 2-3 itinerary options (value / balanced / elevated) with
   estimated costs to compare, and nothing is booked until you choose one. Where an option
   names a specific hotel or tour, its **real** Google rating and review count are shown —
   and where they can't be looked up, it says "no rating available" rather than inventing
   a number.
-- Flight/hotel/tour/payment adapters are written against real provider APIs
-  (Amadeus, Viator, Stripe) and run in **sandbox/test mode only**. Flipping any of them
-  to production requires completing that provider's business approval process first —
-  see "Going to production" below. Until then, bookings will come back as
-  `NOT_CONFIGURED` or sandbox-only results, by design, not as a bug.
+- The old app-side booking code (BookingAgent, `bookingTools.ts`, and the Amadeus /
+  Viator / Stripe adapters in `packages/integrations`) is still in the repo but **not
+  wired into any flow**. It's kept in case in-app booking comes back; "Going to
+  production" below only applies if it does.
 - There is no real user auth yet — every request currently plans a trip for one demo
   user (see the NOTE in `apps/web/app/api/plan/route.ts`).
 

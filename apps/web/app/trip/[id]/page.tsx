@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { BudgetBar } from "../../components/BudgetBar";
 import { ItineraryOptions, type ItineraryOption } from "../../components/ItineraryOptions";
+import { BookingLinks } from "../../components/BookingLinks";
 import { StatusPill } from "../../components/StatusPill";
 
 type TripData = any; // the API route returns Prisma's shape directly; tighten with a shared type once it stabilizes.
@@ -96,8 +97,8 @@ export default function TripPage({ params }: { params: { id: string } }) {
 
   const chooseOption = useCallback(
     async (optionId: string) => {
-      // Booking spends money, so the whole card set locks on the first click
-      // rather than relying on the server's 409 to catch a double submit.
+      // The whole card set locks on the first click rather than relying on
+      // the server's 409 to catch a double submit.
       setChoosingId(optionId);
       setChooseError(null);
       try {
@@ -112,19 +113,16 @@ export default function TripPage({ params }: { params: { id: string } }) {
             // Not an error from the user's point of view -- it's what happened.
             setAlreadyChosen(true);
           } else {
-            setChooseError(body.error ?? `Couldn't start booking: ${res.status}`);
+            setChooseError(body.error ?? `Couldn't save your choice: ${res.status}`);
             setChoosingId(null);
           }
         }
-        // On success the trip poll takes over: status is already BOOKING and
-        // per-item booking pills appear as the agents work.
+        // On success the trip poll takes over: status is READY_TO_BOOK and
+        // the itinerary appears with booking links.
       } catch {
-        // The request can outlive a proxy timeout while booking carries on
-        // server-side, so this must NOT claim the booking failed. The trip
+        // A network drop doesn't mean the choice failed server-side. The trip
         // poll is the source of truth; leave the cards locked.
-        setChooseError(
-          "Still working on this — bookings can take a few minutes. This page updates on its own.",
-        );
+        setChooseError("Still saving your plan — this page updates on its own.");
       }
     },
     [params.id],
@@ -158,7 +156,12 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const isChoosing = trip.status === "CHOOSING";
   // The gap between claiming a choice and the day rows existing: without this
   // the page would briefly look empty under a "Booking…" pill.
-  const settingUp = trip.status === "BOOKING" && trip.itinerary.length === 0;
+  const settingUp =
+    (trip.status === "READY_TO_BOOK" || trip.status === "BOOKING") && trip.itinerary.length === 0;
+  const readyToBook = trip.status === "READY_TO_BOOK" && trip.itinerary.length > 0;
+  const hasLinks = trip.itinerary.some((day: any) =>
+    day.activities.some((a: any) => a.booking?.status === "LINK_OUT"),
+  );
   const chosenLabel = options?.find((o) => o.id === choosingId)?.label;
   const planningFailed =
     trip.status === "NEEDS_ATTENTION" && trip.itinerary.length === 0 && !isChoosing;
@@ -198,8 +201,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
       {trip.status === "PLANNING" && (
         <div className="mt-8">
           <p className="text-sm text-neutral-400">
-            Drafting a few different versions of this trip… This takes a minute, and nothing is
-            being booked yet.
+            Drafting a few different versions of this trip… This takes a minute.
           </p>
           <ul className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
             {[0, 1, 2].map((i) => (
@@ -211,14 +213,14 @@ export default function TripPage({ params }: { params: { id: string } }) {
 
       {planningFailed && (
         <p className="mt-8 text-sm text-amber-300">
-          We couldn&apos;t draft itinerary options for this trip. Nothing has been booked — try
-          again with different dates or budget.
+          We couldn&apos;t draft itinerary options for this trip. Try again with different dates
+          or budget.
         </p>
       )}
 
       {isChoosing && alreadyChosen && (
         <p className="mt-8 text-sm text-neutral-300">
-          A plan has already been chosen for this trip — booking is underway.
+          A plan has already been chosen for this trip.
         </p>
       )}
 
@@ -230,8 +232,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
               Couldn&apos;t load your itinerary options: {optionsError}
             </p>
             <p className="mt-1 text-sm text-neutral-500">
-              Nothing has been booked. Your options are saved — this is just the page failing
-              to fetch them.
+              Your options are saved — this is just the page failing to fetch them.
             </p>
             <button
               type="button"
@@ -262,13 +263,28 @@ export default function TripPage({ params }: { params: { id: string } }) {
 
       {settingUp && (
         <p className="mt-8 text-sm text-neutral-400">
-          Setting up {chosenLabel ? `“${chosenLabel}”` : "your plan"} and starting on flights,
-          hotels, and activities…
+          Setting up {chosenLabel ? `“${chosenLabel}”` : "your plan"}…
         </p>
+      )}
+      {readyToBook && !hasLinks && (
+        <p className="mt-6 text-sm text-neutral-400">
+          Your plan is set. Nothing in it needs booking.
+        </p>
+      )}
+      {readyToBook && hasLinks && (
+        <div className="mt-6 rounded-xl border border-emerald-800 bg-emerald-950/40 p-4">
+          <p className="text-sm font-medium text-emerald-200">Your plan is ready to book.</p>
+          <p className="mt-1 text-sm text-neutral-400">
+            We don&apos;t book anything for you. Use the links beside each flight, hotel, and tour
+            to book it yourself; they open the provider&apos;s site with your dates filled in where
+            the site supports it. Prices there are the real ones; ours are estimates.
+          </p>
+        </div>
       )}
       {trip.status === "BOOKING" && trip.itinerary.length > 0 && (
         <p className="mt-6 text-sm text-neutral-400">
-          Plan locked in — booking flights, hotels, and activities…
+          This trip was planned before the app switched to booking links, so it has no
+          links. Plan a new trip to get them.
         </p>
       )}
 
@@ -290,7 +306,11 @@ export default function TripPage({ params }: { params: { id: string } }) {
                         <p className="text-neutral-500">{activity.description}</p>
                       )}
                     </div>
-                    {activity.booking && <StatusPill status={activity.booking.status} />}
+                    {activity.booking?.status === "LINK_OUT" ? (
+                      <BookingLinks links={activity.booking.links ?? []} title={activity.title} />
+                    ) : (
+                      activity.booking && <StatusPill status={activity.booking.status} />
+                    )}
                   </li>
                 ))}
               </ul>

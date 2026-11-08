@@ -18,10 +18,13 @@ datasource db {
 // above to "postgresql" for staging/prod lets you promote these back to real
 // `enum` blocks if you want DB-level enforcement too.
 //
-// TripStatus:   DRAFT | PLANNING | CHOOSING | BOOKING | CONFIRMED | NEEDS_ATTENTION | CANCELLED | COMPLETED
-//               (CHOOSING = itinerary options generated, waiting on the user to pick one)
+// TripStatus:   DRAFT | PLANNING | CHOOSING | READY_TO_BOOK | BOOKING | CONFIRMED | NEEDS_ATTENTION | CANCELLED | COMPLETED
+//               (CHOOSING = itinerary options generated, waiting on the user to pick one;
+//                READY_TO_BOOK = plan chosen, the user books via links; BOOKING/CONFIRMED are
+//                legacy states from app-side booking, no longer entered)
 // BookingKind:  FLIGHT | HOTEL | TOUR | RESERVATION
-// BookingStatus: SEARCHING | OPTIONS_FOUND | AWAITING_CONFIRMATION | BOOKED | FAILED | CANCELLED
+// BookingStatus: LINK_OUT | SEARCHING | OPTIONS_FOUND | AWAITING_CONFIRMATION | BOOKED | FAILED | CANCELLED
+//               (LINK_OUT = the user books it themselves via search links; the rest are legacy)
 // NotificationKind: ITINERARY_READY | BOOKING_CONFIRMED | BOOKING_FAILED | BUDGET_ALERT | CLARIFICATION_NEEDED | GENERAL
 // ItineraryOptionStatus: PROPOSED | SELECTED | DISCARDED
 

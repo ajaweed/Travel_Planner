@@ -20,6 +20,11 @@ export async function getBudgetStatus(tripId: string): Promise<BudgetStatus> {
 
   const remainingCents = trip.budgetTotalCents - committedCents - pendingCents;
 
+  const selected = await prisma.itineraryOption.findFirst({
+    where: { tripId, status: "SELECTED" },
+    select: { estimatedTotalCents: true },
+  });
+
   return {
     budgetTotalCents: trip.budgetTotalCents,
     committedCents,
@@ -27,6 +32,7 @@ export async function getBudgetStatus(tripId: string): Promise<BudgetStatus> {
     remainingCents,
     currency: trip.currency,
     overBudget: remainingCents < 0,
+    estimatedCents: selected?.estimatedTotalCents ?? null,
   };
 }
 
