@@ -499,3 +499,15 @@ Not verified: true 375px (headless Edge won't go below ~500px) -- qa-tester.
 - Date ranges show the start year when a trip crosses New Year.
 Re-verified: typecheck, 60 tests, build; screenshots of the AI test-mode trip and the
 options view after the fixes. Merged to `main` and pushed. Reviewed by `/code-review`.
+
+**2026-11-08 -- frontend-dev** -- `frontend-dev/research-links`: product owner asked that
+activities come with trusted sources, "links from Google or Reddit". Added
+`buildResearchLinks()` (core) -> "See what people say: Google · Reddit" under every
+itinerary activity (trip route attaches `activity.research`) and next to each named
+hotel/tour on the option cards (options route attaches `bookable.research`). Uses the
+stored candidateName + destination for bookable rows, else title + `destinationFor()`.
+Skips flights and logistics. `simplifyTitle()` strips filler verbs/parentheticals/"if open"
+for better Reddit matching. Not fetching/scraping either site (terms) -- recorded in the
+decisions log. 14 new tests (74 total). Note for everyone editing via Python heredocs in
+this environment: a `` in a regex was written to disk as a literal backspace byte and
+silently broke the regex; caught by a test, repo scanned clean for control characters.

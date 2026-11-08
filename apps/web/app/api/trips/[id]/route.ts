@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@trip-planner/db";
 import {
+  buildResearchLinks,
+  destinationFor,
   getAiBookingReadiness,
   getBudgetStatus,
   getUnreadNotifications,
@@ -35,10 +37,14 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   // Booking links are derived at read time from each booking's stored search
   // params (never stored URLs), so improving the link builder improves every
   // existing trip without a migration.
+  const destinations: string[] = safeDestinations(trip.briefJson);
   const itinerary = trip.itinerary.map((day) => ({
     ...day,
     activities: day.activities.map((activity) => ({
       ...activity,
+      // "See what people say" (Google / Reddit) -- deterministic URLs, never
+      // model-written. Bookable rows use the named place + city they stored.
+      research: researchFor(activity, destinations),
       booking: activity.booking && {
         ...activity.booking,
         links:
@@ -62,5 +68,39 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     aiBooking: getAiBookingReadiness(),
     budget,
     unreadCount: unread.length,
+  });
+}
+
+function safeDestinations(briefJson: string): string[] {
+  try {
+    const d = JSON.parse(briefJson)?.destinations;
+    return Array.isArray(d) ? d.filter((x: unknown): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function researchFor(
+  activity: { title: string; description: string | null; booking: { kind: string; searchParamsJson: string } | null },
+  destinations: string[],
+) {
+  let stored: { candidateName?: unknown; destination?: unknown } = {};
+  if (activity.booking) {
+    try {
+      const parsed = JSON.parse(activity.booking.searchParamsJson);
+      if (parsed && typeof parsed === "object") stored = parsed;
+    } catch {
+      /* fall back to title + trip destination */
+    }
+  }
+  const candidateName = typeof stored.candidateName === "string" ? stored.candidateName : undefined;
+  const destination =
+    (typeof stored.destination === "string" ? stored.destination : undefined) ??
+    destinationFor(destinations, candidateName, activity.title, activity.description ?? undefined);
+  return buildResearchLinks({
+    title: activity.title,
+    candidateName,
+    destination,
+    kind: activity.booking?.kind,
   });
 }
