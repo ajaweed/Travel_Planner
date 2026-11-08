@@ -236,3 +236,11 @@ load-bearing for -- `searchHint` and `kind` stay strict because they decide what
 gets booked. The tool-input repair list stays `["days"]` on purpose: pushing
 `label` through `JSON.parse` would turn a numeric-looking label like "2024" into
 a number and fail validation that would otherwise have passed.
+
+**2026-11-08 -- ux-designer** -- Starting `ux-designer/visual-refresh`. Product owner
+ran the app and called it "so bland". For this task my remit extends from flows to
+*visual direction*: writing `docs/visual-design.md` -- concrete Tailwind tokens (palette
+with verified WCAG AA contrast, next/font typography, spacing/radius/shadow, motion),
+a page-by-page treatment of every existing page/component in `apps/web`, an imagery
+policy, and a prioritized checklist for `frontend-dev`. Doc only -- no app code on
+this branch, so it can't collide with the in-flight `backend-dev/current-date-context`.
