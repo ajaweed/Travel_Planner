@@ -6,12 +6,15 @@ export type TripStatus =
   | "DRAFT"
   | "PLANNING"
   | "CHOOSING" // itinerary options generated; waiting on the user to pick one
-  | "READY_TO_BOOK" // plan chosen; the user books each item themselves via links
-  | "BOOKING" // legacy: app-side booking, no longer entered (see bookingLinks.ts)
+  | "READY_TO_BOOK" // plan chosen in SELF mode; the user books each item via links
+  | "BOOKING" // plan chosen in AI mode; BookingAgent is working through the items
   | "CONFIRMED"
   | "NEEDS_ATTENTION"
   | "CANCELLED"
   | "COMPLETED";
+
+/** Who books a chosen plan. Stored on Trip.bookingMode. */
+export type BookingMode = "SELF" | "AI";
 
 export type BookingKind = "FLIGHT" | "HOTEL" | "TOUR" | "RESERVATION";
 

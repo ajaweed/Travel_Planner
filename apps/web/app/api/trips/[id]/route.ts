@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@trip-planner/db";
-import { getBudgetStatus, getUnreadNotifications, linksForStoredBooking } from "@trip-planner/core";
+import {
+  getAiBookingReadiness,
+  getBudgetStatus,
+  getUnreadNotifications,
+  linksForStoredBooking,
+} from "@trip-planner/core";
+
+// In AI mode, anything the agent couldn't book (failed, or waiting on the
+// user, e.g. over budget) gets links as a do-it-yourself fallback. Not while
+// SEARCHING: offering links mid-booking invites the user and the agent to
+// book the same thing twice.
+const NO_LINKS = new Set(["BOOKED", "CANCELLED", "SEARCHING"]);
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const trip = await prisma.trip.findUnique({
@@ -28,7 +39,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       booking: activity.booking && {
         ...activity.booking,
         links:
-          activity.booking.status === "LINK_OUT"
+          !NO_LINKS.has(activity.booking.status)
             ? linksForStoredBooking(activity.booking.kind, activity.booking.searchParamsJson)
             : [],
       },
@@ -40,5 +51,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     getUnreadNotifications(trip.id),
   ]);
 
-  return NextResponse.json({ trip: { ...trip, itinerary }, budget, unreadCount: unread.length });
+  return NextResponse.json({
+    trip: { ...trip, itinerary },
+    aiBooking: getAiBookingReadiness(),
+    budget,
+    unreadCount: unread.length,
+  });
 }

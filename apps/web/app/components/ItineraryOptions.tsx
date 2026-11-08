@@ -165,13 +165,16 @@ export function ItineraryOptions({
   choosingId,
   disabled,
   error,
+  bookingMode = "SELF",
 }: {
   options: ItineraryOption[];
   onChoose: (optionId: string) => void;
   choosingId: string | null;
   disabled: boolean;
   error: string | null;
+  bookingMode?: "SELF" | "AI";
 }) {
+  const aiBooks = bookingMode === "AI";
   const cheapest = Math.min(...options.map((o) => o.estimatedTotalCents));
   const lookup = options[0]?.draft.reviewLookup;
 
@@ -183,7 +186,9 @@ export function ItineraryOptions({
           : `${options.length} ways to do this trip — pick one`}
       </h2>
       <p className="mt-1 text-sm text-neutral-500">
-        Choosing a plan doesn’t book or charge anything — you’ll get links to book each piece yourself.
+        {aiBooks
+          ? "Choosing a plan starts the AI booking it, within your budget."
+          : "Choosing a plan doesn’t book or charge anything — you’ll get links to book each piece yourself."}
       </p>
 
       {error && (
@@ -270,7 +275,13 @@ export function ItineraryOptions({
                 disabled={disabled}
                 className="mt-4 w-full rounded-lg bg-white py-2 text-sm font-medium text-neutral-900 disabled:opacity-40"
               >
-                {isChoosing ? "Saving your plan…" : "Choose this plan"}
+                {isChoosing
+                  ? aiBooks
+                    ? "Starting bookings…"
+                    : "Saving your plan…"
+                  : aiBooks
+                    ? "Choose & let the AI book"
+                    : "Choose this plan"}
               </button>
             </li>
           );
@@ -279,7 +290,9 @@ export function ItineraryOptions({
 
       <div className="mt-3 space-y-1">
         <p className="text-xs text-neutral-500">
-          Estimates for comparison. Real prices are on the booking sites we link you to.
+          {aiBooks
+            ? "Estimates for comparison. The AI checks real prices against your budget before booking anything."
+            : "Estimates for comparison. Real prices are on the booking sites we link you to."}
         </p>
         {lookup && <ReviewNote lookup={lookup} />}
       </div>

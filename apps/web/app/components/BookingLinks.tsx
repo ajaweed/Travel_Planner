@@ -3,12 +3,22 @@ type Link = { provider: string; url: string; note?: string };
 // Link-out booking: the app never books for the traveller. Each bookable
 // activity gets provider search links (built server-side from structured trip
 // data in packages/core/src/bookingLinks.ts, never model-written URLs).
-export function BookingLinks({ links, title }: { links: Link[]; title: string }) {
+export function BookingLinks({
+  links,
+  title,
+  label,
+}: {
+  links: Link[];
+  title: string;
+  /** Optional lead-in, e.g. "Or book it yourself:" for AI-mode fallbacks. */
+  label?: string;
+}) {
   if (links.length === 0) return null;
   const notes = links.flatMap((l) => (l.note ? [l.note] : []));
   return (
     <div className="flex shrink-0 flex-col items-end gap-1">
-    <div className="flex flex-wrap justify-end gap-1.5">
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
+      {label && <span className="text-xs text-neutral-500">{label}</span>}
       {links.map((link) => (
         <a
           key={link.provider}

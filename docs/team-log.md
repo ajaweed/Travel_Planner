@@ -291,3 +291,26 @@ legacy BOOKING copy; LINK_OUT-only link building + parallel queries; stale comme
 Deliberately not done: deleting BookingAgent / `bookingTools.ts` / `recordBudgetEntry`
 -- kept unwired on purpose (decisions log). 56 tests, typecheck, build pass. Merged to
 `main` and pushed. Reviewed by `/code-review`.
+
+**2026-11-08 -- backend-dev** -- FINISHED `backend-dev/ai-booking-option`. Product owner
+wants both: the user picks who books when choosing a plan -- SELF (links, default) or AI
+(BookingAgent). Keeping BookingAgent/adapters on disk in the link-out change paid off:
+this re-wires them rather than rebuilding.
+- `Trip.bookingMode` (`SELF | AI`, default SELF) + migration `add_trip_booking_mode`.
+- `selectItineraryOption(tripId, optionId, mode)`: SELF -> `READY_TO_BOOK` + LINK_OUT rows
+  (unchanged); AI -> `BOOKING` + SEARCHING rows -> restored `runBookingPipeline` /
+  `processBooking` / `finalizeTripStatus` (verbatim from before link-out) ->
+  CONFIRMED / NEEDS_ATTENTION. Same lock, same release-on-failure (also resets mode).
+- Both modes store identical structured search params, so AI-mode FAILED /
+  AWAITING_CONFIRMATION rows get "Book it yourself instead" links. **Decision:** no links
+  on SEARCHING rows (double-booking risk) -- this overrides visual-design.md §4.9's
+  small link on searching rows; ux-designer please align the spec.
+- `getAiBookingReadiness()` (env-only) in `GET /api/trips/[id]` as `aiBooking`; the new
+  `BookingModePicker` shows an unconfigured/test caveat on the AI option when not live.
+- Choose route: anything but `bookingMode: "AI"` is SELF.
+Verified: 3 new tests (59 total), typecheck, build. Live: Lisbon SELF (no mode field) ->
+READY_TO_BOOK, 5 items with links; Rome AI -> agent ran all 4 items, each FAILED with a
+clear NOT_CONFIGURED reason, trip NEEDS_ATTENTION, every item showing fallback links,
+BOOKING_FAILED notifications. Not yet built (in known gaps): payment-method collection for
+live AI booking, "I booked this myself" control, approve/skip on AWAITING_CONFIRMATION,
+and auth on `/choose` -- which now matters again because AI mode can spend.

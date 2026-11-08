@@ -1,0 +1,72 @@
+export type BookingMode = "SELF" | "AI";
+
+export type AiBookingReadiness = {
+  live: boolean;
+  anyConfigured: boolean;
+};
+
+// Who books the plan the user is about to choose. SELF is the default: the AI
+// spending someone's money must always be an explicit opt-in.
+export function BookingModePicker({
+  value,
+  onChange,
+  readiness,
+  disabled,
+}: {
+  value: BookingMode;
+  onChange: (mode: BookingMode) => void;
+  readiness: AiBookingReadiness | undefined;
+  disabled: boolean;
+}) {
+  const choices: Array<{ mode: BookingMode; title: string; body: string }> = [
+    {
+      mode: "SELF",
+      title: "I’ll book it myself",
+      body: "You get a link for every flight, hotel and tour. Nothing is booked or charged by us.",
+    },
+    {
+      mode: "AI",
+      title: "Let the AI book it for me",
+      body: "An AI agent books each item for you, checking every price against your budget first. Anything it can’t book comes back to you with links.",
+    },
+  ];
+
+  return (
+    <fieldset className="mt-8" disabled={disabled}>
+      <legend className="text-sm font-semibold text-neutral-300">How do you want to book?</legend>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        {choices.map((c) => {
+          const selected = value === c.mode;
+          return (
+            <label
+              key={c.mode}
+              className={`cursor-pointer rounded-xl border p-4 transition-colors ${
+                selected ? "border-neutral-200 bg-neutral-800" : "border-neutral-700 hover:border-neutral-500"
+              } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="booking-mode"
+                  value={c.mode}
+                  checked={selected}
+                  onChange={() => onChange(c.mode)}
+                  className="accent-white"
+                />
+                <span className="text-sm font-medium text-neutral-100">{c.title}</span>
+              </div>
+              <p className="mt-1 pl-6 text-sm text-neutral-400">{c.body}</p>
+              {c.mode === "AI" && readiness && !readiness.live && (
+                <p className="mt-2 pl-6 text-xs text-amber-300">
+                  {readiness.anyConfigured
+                    ? "Booking providers are in test mode, so nothing real will be booked or charged yet. Anything the AI can’t book falls back to links."
+                    : "Booking providers aren’t connected yet, so the AI can’t complete real bookings. It will try, and every item will fall back to links."}
+                </p>
+              )}
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}

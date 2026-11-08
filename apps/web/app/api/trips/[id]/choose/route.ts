@@ -19,11 +19,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
+  // Default to SELF: an absent or unrecognised mode must never opt someone
+  // into the AI spending their money.
+  const mode = body.bookingMode === "AI" ? "AI" : "SELF";
+
   try {
-    // Locks in the plan (CHOOSING -> READY_TO_BOOK) and writes its days and
-    // link-out bookings. Nothing is booked: the user books each item via the
-    // links on the trip page. Fast -- no agent calls happen here.
-    await selectItineraryOption(params.id, body.optionId);
+    // SELF: locks in the plan (-> READY_TO_BOOK) with link-out bookings; fast.
+    // AI: locks in the plan (-> BOOKING) and runs the full booking pass before
+    // returning. The status flips immediately, so the dashboard's poll shows
+    // per-item progress while this request is still in flight.
+    await selectItineraryOption(params.id, body.optionId, mode);
     return NextResponse.json({ ok: true });
   } catch (err) {
     if (err instanceof OrchestratorError) {

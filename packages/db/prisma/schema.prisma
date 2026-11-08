@@ -44,6 +44,10 @@ model Trip {
   status    String     @default("DRAFT")
   title     String? // e.g. "Relaxed week in Lisbon"
 
+  // Who books the chosen plan: "SELF" (the traveller, via search links) or
+  // "AI" (BookingAgent books via provider APIs). Chosen with the plan.
+  bookingMode String @default("SELF")
+
   // Raw input + structured brief the ConciergeAgent extracted from it.
   rawPrompt    String
   briefJson    String // TripBrief, serialized (see packages/core/src/agents/types.ts)
