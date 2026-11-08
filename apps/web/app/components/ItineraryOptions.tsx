@@ -20,6 +20,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { BookingMode } from "@trip-planner/db";
+import { ResearchLinks } from "./ResearchLinks";
 import { Alert, buttonClasses, fmtMoney } from "./ui";
 
 // The options-comparison view: 2-3 candidate itineraries side by side with
@@ -50,6 +51,8 @@ type Bookable = {
   searchHint: string;
   candidateName?: string;
   review?: AttachedReview;
+  /** Google / Reddit "see what people say" links, added by the options API. */
+  research?: Array<{ provider: string; url: string }>;
 };
 
 type OptionDay = {
@@ -337,6 +340,10 @@ export function ItineraryOptions({
                               <span className="block text-xs text-ink-500">
                                 {place.kind === "HOTEL" ? "Hotel" : "Tour"}
                               </span>
+                              <ResearchLinks
+                                links={place.research}
+                                subject={place.review?.name ?? place.candidateName ?? "this place"}
+                              />
                             </span>
                           </span>
                           <RatingBadge review={place.review} />

@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { BookingLinks } from "./BookingLinks";
+import { ResearchLinks } from "./ResearchLinks";
 import { StatusPill } from "./StatusPill";
 import { CARD_CLASSES, fmtMoney } from "./ui";
 
@@ -36,6 +37,7 @@ type Activity = {
   description?: string | null;
   startTime?: string | null;
   booking?: Booking | null;
+  research?: Link[];
 };
 type Day = { id: string; dayIndex: number; date?: string | null; summary?: string | null; activities: Activity[] };
 
@@ -197,6 +199,7 @@ function ActivityRow({ activity, aiMode, testMode }: { activity: Activity; aiMod
             {activity.title}
           </p>
           {activity.description && <p className="mt-0.5 text-sm text-ink-500">{activity.description}</p>}
+          <ResearchLinks links={activity.research} subject={activity.title} />
           {booking && !linkOut && (
             <div className="mt-1.5" aria-live="polite">
               <AiBookingDetail booking={booking} testMode={testMode} />
