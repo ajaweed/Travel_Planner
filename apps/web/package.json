@@ -12,6 +12,7 @@
   "dependencies": {
     "@trip-planner/core": "*",
     "@trip-planner/db": "*",
+    "lucide-react": "^0.460.0",
     "next": "^14.2.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

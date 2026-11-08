@@ -1,11 +1,30 @@
 "use client";
 
+import { useState } from "react";
+import {
+  BedDouble,
+  Bot,
+  CalendarDays,
+  Check,
+  Gauge,
+  Gem,
+  Info,
+  Loader2,
+  MapPin,
+  PiggyBank,
+  Route,
+  Scale,
+  ShieldCheck,
+  Star,
+  Ticket,
+  type LucideIcon,
+} from "lucide-react";
 import type { BookingMode } from "@trip-planner/db";
+import { Alert, buttonClasses, fmtMoney } from "./ui";
 
 // The options-comparison view: 2-3 candidate itineraries side by side with
 // enough to actually choose between them (cost delta, pace, shape, and real
-// ratings on the named hotels/tours). Implements the ux-designer spec in
-// docs/team-log.md.
+// ratings on the named hotels/tours). Visuals: docs/visual-design.md §4.3.
 //
 // Honesty rule this component enforces: a rating is rendered only when real
 // rating data came back from the provider. Anything else renders the words
@@ -55,16 +74,21 @@ export type ItineraryOption = {
   pace: string;
   estimatedTotalCents: number;
   currency: string;
-  draft: { days: OptionDay[]; reviewLookup: ReviewLookup };
+  draft: { days: OptionDay[]; reviewLookup: ReviewLookup; variant?: string };
 };
 
-function fmt(cents: number, currency: string) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 0,
-  }).format(cents / 100);
-}
+type Tier = { eyebrow: string; Icon: LucideIcon; strip: string; top: string };
+
+// Tier identity is color + icon + name together, so it never depends on color
+// vision. Driven by the persisted variant key -- never guessed from position
+// or price. Options without one (generated before it was stored) get the
+// neutral header.
+const TIERS: Record<string, Tier> = {
+  value: { eyebrow: "Value", Icon: PiggyBank, strip: "bg-value-50 text-value-600", top: "border-t-value-600" },
+  balanced: { eyebrow: "Balanced", Icon: Scale, strip: "bg-balanced-50 text-balanced-600", top: "border-t-balanced-600" },
+  elevated: { eyebrow: "Elevated", Icon: Gem, strip: "bg-elevated-50 text-elevated-600", top: "border-t-elevated-600" },
+};
+const NEUTRAL_TIER: Tier = { eyebrow: "", Icon: Route, strip: "bg-sand-100 text-ink-700", top: "border-t-sand-300" };
 
 const PACE_LABELS: Record<string, string> = {
   relaxed: "Relaxed",
@@ -84,21 +108,15 @@ function namedPlaces(days: OptionDay[]): Bookable[] {
   return out;
 }
 
-function countBookables(days: OptionDay[]): number {
-  return days.reduce(
-    (sum, day) => sum + day.activities.filter((a) => a.bookable).length,
-    0,
-  );
-}
-
-function countActivities(days: OptionDay[]): number {
-  return days.reduce((sum, day) => sum + day.activities.length, 0);
-}
+const countBookables = (days: OptionDay[]) =>
+  days.reduce((sum, day) => sum + day.activities.filter((a) => a.bookable).length, 0);
+const countActivities = (days: OptionDay[]) =>
+  days.reduce((sum, day) => sum + day.activities.length, 0);
 
 function RatingBadge({ review }: { review?: AttachedReview }) {
-  // No real rating -> say that, in words. See the honesty rule above.
+  // No real rating -> say that, in words, and don't make it look like a low rating.
   if (!review || review.rating === undefined) {
-    return <span className="text-xs text-neutral-500">No rating available</span>;
+    return <span className="shrink-0 text-sm text-ink-500">No rating available</span>;
   }
   const label =
     review.userRatingsTotal === undefined
@@ -108,12 +126,12 @@ function RatingBadge({ review }: { review?: AttachedReview }) {
   return (
     <span
       aria-label={label}
-      className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200"
+      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-sand-100 px-2.5 py-1 text-xs font-medium tabular-nums text-ink-900"
     >
-      <span aria-hidden="true">★</span>
-      <span className="font-medium">{review.rating.toFixed(1)}</span>
+      <Star size={12} aria-hidden="true" className="fill-current text-sunset-600" />
+      <span>{review.rating.toFixed(1)}</span>
       {review.userRatingsTotal !== undefined && (
-        <span className="text-neutral-400">
+        <span className="text-ink-500">
           · {new Intl.NumberFormat("en-US").format(review.userRatingsTotal)} reviews
         </span>
       )}
@@ -124,7 +142,7 @@ function RatingBadge({ review }: { review?: AttachedReview }) {
 function ReviewNote({ lookup }: { lookup: ReviewLookup }) {
   if (lookup.status === "NOT_CONFIGURED") {
     return (
-      <p className="text-xs text-neutral-500">
+      <p>
         Google Places isn&apos;t configured, so no ratings could be looked up. Set
         GOOGLE_PLACES_API_KEY to see real ratings here.
       </p>
@@ -133,31 +151,42 @@ function ReviewNote({ lookup }: { lookup: ReviewLookup }) {
   if (lookup.status === "UNAVAILABLE") {
     // Configured but broken. Must not read as "none of these places exist".
     return (
-      <p className="text-xs text-neutral-500">
-        Ratings couldn&apos;t be looked up right now ({lookup.message}) — that&apos;s on us,
-        not a reflection of these places.
+      <p>
+        Ratings couldn&apos;t be looked up right now ({lookup.message}) — that&apos;s on us, not a
+        reflection of these places.
       </p>
     );
   }
   if (lookup.status === "NO_CANDIDATES") {
-    return (
-      <p className="text-xs text-neutral-500">
-        None of these options named a specific hotel or tour to look up ratings for.
-      </p>
-    );
+    return <p>None of these options named a specific hotel or tour to look up ratings for.</p>;
   }
   return (
-    <p className="text-xs text-neutral-500">
+    <p>
       Matched real Google ratings for {lookup.matched} of {lookup.named} named{" "}
       {lookup.named === 1 ? "place" : "places"}
-      {lookup.named > lookup.lookedUp
-        ? ` (only the first ${lookup.lookedUp} were looked up)`
-        : ""}
-      {lookup.failed > 0
-        ? `; ${lookup.failed} lookup${lookup.failed === 1 ? "" : "s"} failed`
-        : ""}
-      .
+      {lookup.named > lookup.lookedUp ? ` (only the first ${lookup.lookedUp} were looked up)` : ""}
+      {lookup.failed > 0 ? `; ${lookup.failed} lookup${lookup.failed === 1 ? "" : "s"} failed` : ""}.
     </p>
+  );
+}
+
+function Summary({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 220;
+  return (
+    <div className="mt-4">
+      <p className={`text-sm text-ink-700 ${long && !open ? "line-clamp-4" : ""}`}>{text}</p>
+      {long && (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="mt-1 rounded text-sm font-medium text-lagoon-700 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lagoon-600"
+        >
+          {open ? "Show less" : "Read more"}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -167,43 +196,64 @@ export function ItineraryOptions({
   choosingId,
   disabled,
   error,
+  errorTone = "danger",
   bookingMode = "SELF",
+  modePicker,
 }: {
   options: ItineraryOption[];
   onChoose: (optionId: string) => void;
   choosingId: string | null;
   disabled: boolean;
   error: string | null;
+  /** "info" for "still working" messages, which aren't failures. */
+  errorTone?: "danger" | "info";
   bookingMode?: BookingMode;
+  /** The booking-mode fieldset, rendered between the header and the cards. */
+  modePicker?: React.ReactNode;
 }) {
   const aiBooks = bookingMode === "AI";
   const cheapest = Math.min(...options.map((o) => o.estimatedTotalCents));
   const lookup = options[0]?.draft.reviewLookup;
+  const single = options.length === 1;
 
   return (
-    <section className="mt-8" aria-labelledby="options-heading">
-      <h2 id="options-heading" className="text-sm font-semibold text-neutral-300">
-        {options.length === 1
-          ? "Your itinerary"
-          : `${options.length} ways to do this trip — pick one`}
+    <section className="mt-12" aria-labelledby="options-heading">
+      <h2 id="options-heading" className="font-display text-2xl font-semibold text-ink-900">
+        {single ? "Your itinerary" : `${options.length} ways to do this trip`}
       </h2>
-      <p className="mt-1 text-sm text-neutral-500">
-        {aiBooks
-          ? "Choosing a plan starts the AI booking it, within your budget."
-          : "Choosing a plan doesn’t book or charge anything — you’ll get links to book each piece yourself."}
+      <p className="mt-2 flex items-center gap-2 text-ink-700">
+        <ShieldCheck size={18} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-lagoon-600" />
+        Nothing is booked until you choose a plan.
       </p>
 
+      {modePicker}
+
       {error && (
-        <p role="alert" className="mt-3 text-sm text-amber-300">
+        <Alert
+          tone={errorTone}
+          className="mt-6"
+          icon={
+            errorTone === "info" ? (
+              <Loader2 size={18} strokeWidth={1.75} aria-hidden="true" className="motion-safe:animate-spin" />
+            ) : undefined
+          }
+        >
           {error}
-        </p>
+        </Alert>
       )}
 
-      <ul className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {options.map((option) => {
+      <ul
+        className={`mt-6 grid items-stretch gap-5 ${
+          single ? "mx-auto max-w-md" : options.length === 2 ? "md:grid-cols-2" : "md:grid-cols-2 lg:grid-cols-3"
+        }`}
+      >
+        {options.map((option, i) => {
+          const tier = (option.draft.variant && TIERS[option.draft.variant]) || NEUTRAL_TIER;
           const places = namedPlaces(option.draft.days);
           const delta = option.estimatedTotalCents - cheapest;
+          const isCheapest = delta === 0 && !single;
           const isChoosing = choosingId === option.id;
+          const locked = choosingId !== null && !isChoosing;
           const hotelExcerpt = places
             .find((p) => p.kind === "HOTEL" && p.review?.excerpts?.length)
             ?.review?.excerpts?.[0];
@@ -211,92 +261,144 @@ export function ItineraryOptions({
           return (
             <li
               key={option.id}
-              className="flex flex-col rounded-xl border border-neutral-800 bg-neutral-950 p-4"
+              style={{ animationDelay: `${i * 60}ms` }}
+              className={`flex flex-col overflow-hidden rounded-2xl border border-t-4 border-sand-200 bg-white shadow-card motion-safe:animate-rise motion-safe:transition motion-safe:duration-200 ${tier.top} ${
+                locked ? "opacity-60 saturate-50" : "motion-safe:hover:-translate-y-0.5 hover:shadow-lift"
+              } ${isChoosing ? "ring-2 ring-lagoon-600 ring-offset-2 ring-offset-sand-50" : ""}`}
             >
-              <div className="flex items-start justify-between gap-2">
-                <h3 className="text-base font-semibold leading-tight">{option.label}</h3>
-                <span className="shrink-0 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
-                  {PACE_LABELS[option.pace] ?? option.pace}
-                </span>
-              </div>
-
-              <div className="mt-3">
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-xl font-semibold">
-                    {fmt(option.estimatedTotalCents, option.currency)}
+              {/* Tier header strip */}
+              <div className={`flex items-center gap-2 px-5 py-2.5 ${tier.strip}`}>
+                <tier.Icon size={18} strokeWidth={1.75} aria-hidden="true" />
+                {tier.eyebrow && (
+                  <span className="text-xs font-semibold uppercase tracking-[0.12em]">{tier.eyebrow}</span>
+                )}
+                {isCheapest && (
+                  <span className="ml-auto rounded-full bg-white/70 px-2.5 py-0.5 text-xs font-medium">
+                    Lowest estimate
                   </span>
-                  <span className="text-xs text-neutral-500">est. total</span>
-                </div>
-                <p className="mt-0.5 text-xs text-neutral-400">
-                  {delta === 0
-                    ? "Lowest estimate"
-                    : `+${fmt(delta, option.currency)} vs cheapest`}
-                </p>
+                )}
               </div>
 
-              <p className="mt-3 text-xs text-neutral-400">
-                {option.draft.days.length} days · {countActivities(option.draft.days)}{" "}
-                activities · {countBookables(option.draft.days)} to book
-              </p>
+              <div className="flex-1 p-5">
+                <h3 className="font-display text-xl font-semibold leading-tight text-ink-900">{option.label}</h3>
 
-              <p className="mt-3 text-sm text-neutral-300">{option.summary}</p>
-
-              {places.length > 0 && (
-                <ul className="mt-4 space-y-2 border-t border-neutral-800 pt-3">
-                  {places.map((place, i) => (
-                    <li key={`${place.kind}-${i}`} className="text-sm">
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="text-neutral-200">
-                          {place.review?.name ?? place.candidateName}
-                          <span className="ml-1 text-xs uppercase tracking-wide text-neutral-500">
-                            {place.kind === "HOTEL" ? "hotel" : "tour"}
-                          </span>
-                        </span>
-                        <RatingBadge review={place.review} />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {hotelExcerpt && (
-                <blockquote className="mt-3 border-l-2 border-neutral-800 pl-3 text-xs italic text-neutral-400">
-                  “{hotelExcerpt.text}”
-                  {hotelExcerpt.authorName && (
-                    <footer className="mt-1 not-italic text-neutral-500">
-                      — {hotelExcerpt.authorName}
-                      {hotelExcerpt.relativeTime ? `, ${hotelExcerpt.relativeTime}` : ""}
-                    </footer>
+                <div className="mt-4 tabular-nums">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-semibold text-ink-900">
+                      {fmtMoney(option.estimatedTotalCents, option.currency)}
+                    </span>
+                    <span className="text-xs font-medium text-ink-500">est. total</span>
+                  </div>
+                  {/* The cheapest card says "Lowest estimate" once, in its tier strip. */}
+                  {!single && delta > 0 && (
+                    <p className="mt-1 text-sm text-ink-700">+{fmtMoney(delta, option.currency)} vs cheapest</p>
                   )}
-                </blockquote>
-              )}
+                </div>
 
-              <button
-                type="button"
-                onClick={() => onChoose(option.id)}
-                disabled={disabled}
-                className="mt-4 w-full rounded-lg bg-white py-2 text-sm font-medium text-neutral-900 disabled:opacity-40"
-              >
-                {isChoosing
-                  ? aiBooks
-                    ? "Starting bookings…"
-                    : "Saving your plan…"
-                  : aiBooks
-                    ? "Choose & let the AI book"
-                    : "Choose this plan"}
-              </button>
+                <ul className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-sm tabular-nums text-ink-700">
+                  <li className="flex items-center gap-1.5">
+                    <CalendarDays size={16} strokeWidth={1.75} aria-hidden="true" />
+                    {option.draft.days.length} days
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <MapPin size={16} strokeWidth={1.75} aria-hidden="true" />
+                    {countActivities(option.draft.days)} activities
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <Ticket size={16} strokeWidth={1.75} aria-hidden="true" />
+                    {countBookables(option.draft.days)} to book
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <Gauge size={16} strokeWidth={1.75} aria-hidden="true" />
+                    {/* "Pace: Balanced", never bare "Balanced" -- it would collide with the tier name. */}
+                    Pace: {PACE_LABELS[option.pace] ?? option.pace}
+                  </li>
+                </ul>
+
+                <Summary text={option.summary} />
+
+                {places.length > 0 && (
+                  <ul className="mt-4 space-y-2.5 border-t border-sand-200 pt-4">
+                    {places.map((place, j) => {
+                      const KindIcon = place.kind === "HOTEL" ? BedDouble : Ticket;
+                      return (
+                        <li key={`${place.kind}-${j}`} className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+                          <span className="flex min-w-[10rem] flex-1 items-start gap-2">
+                            <KindIcon
+                              size={16}
+                              strokeWidth={1.75}
+                              aria-hidden="true"
+                              className="mt-0.5 shrink-0 text-ink-500"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium text-ink-900">
+                                {place.review?.name ?? place.candidateName}
+                              </span>
+                              <span className="block text-xs text-ink-500">
+                                {place.kind === "HOTEL" ? "Hotel" : "Tour"}
+                              </span>
+                            </span>
+                          </span>
+                          <RatingBadge review={place.review} />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+
+                {hotelExcerpt && (
+                  <blockquote className="mt-4 border-l-2 border-sand-300 pl-3 text-sm italic text-ink-700">
+                    “{hotelExcerpt.text}”
+                    {hotelExcerpt.authorName && (
+                      <footer className="mt-1 text-xs not-italic text-ink-500">
+                        — {hotelExcerpt.authorName}
+                        {hotelExcerpt.relativeTime ? `, ${hotelExcerpt.relativeTime}` : ""}
+                      </footer>
+                    )}
+                  </blockquote>
+                )}
+              </div>
+
+              <div className="p-5 pt-0">
+                <button
+                  type="button"
+                  onClick={() => onChoose(option.id)}
+                  disabled={disabled}
+                  className={buttonClasses("primary", "w-full")}
+                >
+                  {isChoosing ? (
+                    <>
+                      <Loader2 size={16} strokeWidth={2} aria-hidden="true" className="motion-safe:animate-spin" />
+                      {aiBooks ? "Starting bookings…" : "Saving your plan…"}
+                    </>
+                  ) : aiBooks ? (
+                    <>
+                      <Bot size={16} strokeWidth={2} aria-hidden="true" />
+                      Choose and start booking
+                    </>
+                  ) : (
+                    <>
+                      <Check size={16} strokeWidth={2} aria-hidden="true" />
+                      Choose this plan
+                    </>
+                  )}
+                </button>
+              </div>
             </li>
           );
         })}
       </ul>
 
-      <div className="mt-3 space-y-1">
-        <p className="text-xs text-neutral-500">
-          {aiBooks
-            ? "Estimates for comparison. The AI checks real prices against your budget before booking anything."
-            : "Estimates for comparison. Real prices are on the booking sites we link you to."}
-        </p>
-        {lookup && <ReviewNote lookup={lookup} />}
+      <div className="mt-5 flex gap-3 rounded-xl bg-sand-100 p-4 text-sm text-ink-500">
+        <Info size={18} strokeWidth={1.75} aria-hidden="true" className="mt-px shrink-0" />
+        <div className="space-y-1">
+          <p>
+            {aiBooks
+              ? "Estimated costs, for comparison. The AI checks real prices against your budget before booking anything."
+              : "Estimated costs, for comparison. Real prices are on the booking sites we link you to."}
+          </p>
+          {lookup && <ReviewNote lookup={lookup} />}
+        </div>
       </div>
     </section>
   );

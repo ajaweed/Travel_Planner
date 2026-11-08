@@ -1,11 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import {
+  AlertTriangle,
+  Bot,
+  CalendarDays,
+  Compass,
+  ExternalLink,
+  FlaskConical,
+  ListChecks,
+  Loader2,
+  MapPinOff,
+  MessageCircleQuestion,
+  RefreshCw,
+  Send,
+} from "lucide-react";
 import { BudgetBar } from "../../components/BudgetBar";
 import { ItineraryOptions, type ItineraryOption } from "../../components/ItineraryOptions";
-import { BookingLinks } from "../../components/BookingLinks";
 import { BookingModePicker, type BookingMode } from "../../components/BookingModePicker";
+import { ContourPattern } from "../../components/ContourPattern";
+import { ItineraryTimeline } from "../../components/ItineraryTimeline";
+import { Notifications } from "../../components/Notifications";
 import { StatusPill } from "../../components/StatusPill";
+import { Alert, buttonClasses, CARD_CLASSES, INPUT_CLASSES } from "../../components/ui";
 
 type TripData = any; // the API route returns Prisma's shape directly; tighten with a shared type once it stabilizes.
 
@@ -17,6 +35,19 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const [options, setOptions] = useState<ItineraryOption[] | null>(null);
   const [choosingId, setChoosingId] = useState<string | null>(null);
   const [chooseError, setChooseError] = useState<string | null>(null);
+  // "info" for the AI-mode "still working" message, which isn't a failure.
+  const [chooseErrorTone, setChooseErrorTone] = useState<"danger" | "info">("danger");
+  const answerRef = useRef<HTMLInputElement>(null);
+  // Gated on status as well as the unread flag: nothing in the app marks
+  // notifications read, so without the status check an answered clarification
+  // prompt stays on screen forever -- and submitting it on a trip that has
+  // already chosen an option is rejected server-side anyway. Computed once,
+  // here, so the focus effect and the rendered form can't disagree.
+  const awaitingBrief = data?.trip?.status === "DRAFT" || data?.trip?.status === "PLANNING";
+  const pendingClarification = awaitingBrief
+    ? data?.trip?.notifications?.find((n: any) => n.kind === "CLARIFICATION_NEEDED" && !n.read)
+    : undefined;
+  const clarificationId: string | undefined = pendingClarification?.id;
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [optionsReload, setOptionsReload] = useState(0);
   const [alreadyChosen, setAlreadyChosen] = useState(false);
@@ -81,6 +112,11 @@ export default function TripPage({ params }: { params: { id: string } }) {
     };
   }, [params.id, tripStatus, optionsReload]);
 
+  // Move focus to the clarification input when a question first appears.
+  useEffect(() => {
+    if (clarificationId) answerRef.current?.focus();
+  }, [clarificationId]);
+
   async function submitAnswer(e: React.FormEvent) {
     e.preventDefault();
     if (!answer.trim()) return;
@@ -115,6 +151,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
             // Not an error from the user's point of view -- it's what happened.
             setAlreadyChosen(true);
           } else {
+            setChooseErrorTone("danger");
             setChooseError(body.error ?? `Couldn't save your choice: ${res.status}`);
             setChoosingId(null);
           }
@@ -125,6 +162,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
         // In AI mode the request can outlive a proxy timeout while booking
         // carries on server-side, so this must NOT claim anything failed. The
         // trip poll is the source of truth; leave the cards locked.
+        setChooseErrorTone("info");
         setChooseError(
           bookingMode === "AI"
             ? "Still working on this — bookings can take a few minutes. This page updates on its own."
@@ -137,29 +175,43 @@ export default function TripPage({ params }: { params: { id: string } }) {
 
   if (error) {
     return (
-      <main className="mx-auto max-w-3xl px-6 py-10">
-        <p className="text-red-400">{error}</p>
+      <main id="main" className="mx-auto max-w-5xl px-6 py-16 md:px-8">
+        <div className={`mx-auto max-w-md p-6 text-center ${CARD_CLASSES}`}>
+          <MapPinOff size={28} strokeWidth={1.75} aria-hidden="true" className="mx-auto text-danger-700" />
+          <h1 className="mt-3 font-display text-2xl font-semibold text-ink-900">We couldn&apos;t load this trip</h1>
+          <p role="alert" className="mt-2 text-sm text-ink-500">
+            {error}
+          </p>
+          <div className="mt-5 flex flex-wrap justify-center gap-3">
+            <button type="button" onClick={() => window.location.reload()} className={buttonClasses("primary")}>
+              <RefreshCw size={16} strokeWidth={2} aria-hidden="true" />
+              Try again
+            </button>
+            <Link href="/" className={buttonClasses("secondary")}>
+              Plan a new trip
+            </Link>
+          </div>
+        </div>
       </main>
     );
   }
 
   if (!data) {
     return (
-      <main className="mx-auto max-w-3xl px-6 py-10">
-        <p className="text-neutral-400">Loading your trip…</p>
+      <main id="main" className="mx-auto max-w-5xl px-6 py-8 md:px-8">
+        <p role="status" className="sr-only">
+          Loading your trip…
+        </p>
+        <div aria-hidden="true" className="space-y-4">
+          <div className="h-10 w-2/3 rounded-xl bg-sand-100 motion-safe:animate-pulse" />
+          <div className="h-6 w-40 rounded-full bg-sand-100 motion-safe:animate-pulse" />
+          <div className="mt-6 h-28 rounded-2xl bg-sand-100 motion-safe:animate-pulse" />
+        </div>
       </main>
     );
   }
 
   const { trip, budget } = data;
-  // Gated on status as well as the unread flag: nothing in the app marks
-  // notifications read, so without the status check an answered clarification
-  // prompt stays on screen forever -- and submitting it on a trip that has
-  // already chosen an option is now rejected server-side anyway.
-  const awaitingBrief = trip.status === "DRAFT" || trip.status === "PLANNING";
-  const pendingClarification = awaitingBrief
-    ? trip.notifications.find((n: any) => n.kind === "CLARIFICATION_NEEDED" && !n.read)
-    : undefined;
   const isChoosing = trip.status === "CHOOSING";
   // The gap between claiming a choice and the day rows existing: without this
   // the page would briefly look empty under a "Booking…" pill.
@@ -167,203 +219,294 @@ export default function TripPage({ params }: { params: { id: string } }) {
     (trip.status === "READY_TO_BOOK" || trip.status === "BOOKING") && trip.itinerary.length === 0;
   const readyToBook = trip.status === "READY_TO_BOOK" && trip.itinerary.length > 0;
   const aiMode = trip.bookingMode === "AI";
+  // A plan has been chosen once the itinerary exists or the trip has moved past choosing.
+  const planChosen =
+    trip.itinerary.length > 0 || ["READY_TO_BOOK", "BOOKING", "CONFIRMED"].includes(trip.status);
+  // "Test" labels promise that no money moved, so they appear only when no
+  // provider is configured for production. Partly-live setups and a missing
+  // readiness flag both get NO test labels: a real charge must never be
+  // presented as fake. (Readiness reflects the server's current env, not the
+  // env at booking time -- acceptable while every provider is sandbox-only.)
+  const testMode = aiMode && data.aiBooking != null && !data.aiBooking.anyLive;
   const hasLinks = trip.itinerary.some((day: any) =>
     day.activities.some((a: any) => a.booking?.status === "LINK_OUT"),
+  );
+  const hasBookables = (options ?? []).some((o) =>
+    o.draft.days.some((d) => d.activities.some((a) => a.bookable)),
   );
   const chosenLabel = options?.find((o) => o.id === choosingId)?.label;
   const planningFailed =
     trip.status === "NEEDS_ATTENTION" && trip.itinerary.length === 0 && !isChoosing;
+  const dateRange = formatDateRange(trip.startDate, trip.endDate);
+  const testSuffix = testMode ? " (test mode)" : "";
+
+  const optionSkeletons = (
+    <ul className="mt-6 grid gap-5 md:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <li key={i} className={`overflow-hidden ${CARD_CLASSES}`}>
+          <div className="h-10 bg-sand-100 motion-safe:animate-pulse" />
+          <div className="space-y-3 p-5">
+            <div className="h-6 w-3/4 rounded bg-sand-100 motion-safe:animate-pulse" />
+            <div className="h-8 w-1/3 rounded bg-sand-100 motion-safe:animate-pulse" />
+            <div className="h-3 w-full rounded bg-sand-100 motion-safe:animate-pulse" />
+            <div className="h-3 w-full rounded bg-sand-100 motion-safe:animate-pulse" />
+            <div className="h-3 w-2/3 rounded bg-sand-100 motion-safe:animate-pulse" />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-10">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{trip.title ?? "Your trip"}</h1>
-        <StatusPill status={trip.status} />
-      </div>
-
-      <div className="mt-6">
-        <BudgetBar budget={budget} />
-      </div>
-
-      {pendingClarification && (
-        <form onSubmit={submitAnswer} className="mt-6 rounded-xl border border-amber-700 bg-amber-950/40 p-4">
-          <p className="text-sm font-medium text-amber-200">{pendingClarification.message}</p>
-          <div className="mt-3 flex gap-2">
-            <input
-              value={answer}
-              onChange={(e) => setAnswer(e.target.value)}
-              placeholder="Your answer…"
-              className="flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm outline-none focus:border-neutral-400"
-            />
-            <button
-              type="submit"
-              disabled={answering || !answer.trim()}
-              className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-neutral-900 disabled:opacity-40"
-            >
-              {answering ? "Sending…" : "Send"}
-            </button>
+    <main id="main">
+      {/* Header band */}
+      <div className="relative -mt-16 overflow-hidden pb-14 pt-24">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-sunrise [mask-image:linear-gradient(to_bottom,black_55%,transparent)]" />
+        <ContourPattern opacity={0.05} />
+        <div className="relative mx-auto max-w-5xl px-6 md:px-8">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <h1 className="font-display text-4xl font-semibold tracking-tight text-ink-900">
+              {trip.title ?? "Your trip"}
+            </h1>
+            <StatusPill status={trip.status} testMode={testMode} />
           </div>
-        </form>
-      )}
-
-      {trip.status === "PLANNING" && (
-        <div className="mt-8">
-          <p className="text-sm text-neutral-400">
-            Drafting a few different versions of this trip… This takes a minute.
-          </p>
-          <ul className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
-            {[0, 1, 2].map((i) => (
-              <li key={i} className="h-52 animate-pulse rounded-xl border border-neutral-800 bg-neutral-900/50" />
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {planningFailed && (
-        <p className="mt-8 text-sm text-amber-300">
-          We couldn&apos;t draft itinerary options for this trip. Try again with different dates
-          or budget.
-        </p>
-      )}
-
-      {isChoosing && alreadyChosen && (
-        <p className="mt-8 text-sm text-neutral-300">
-          A plan has already been chosen for this trip.
-        </p>
-      )}
-
-      {isChoosing &&
-        !alreadyChosen &&
-        (optionsError !== null ? (
-          <div className="mt-8">
-            <p role="alert" className="text-sm text-amber-300">
-              Couldn&apos;t load your itinerary options: {optionsError}
-            </p>
-            <p className="mt-1 text-sm text-neutral-500">
-              Your options are saved — this is just the page failing to fetch them.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setOptionsError(null);
-                setOptionsReload((n) => n + 1);
-              }}
-              className="mt-3 rounded-lg bg-white px-4 py-2 text-sm font-medium text-neutral-900"
-            >
-              Try again
-            </button>
-          </div>
-        ) : options === null ? (
-          <p className="mt-8 text-sm text-neutral-400">Loading your options…</p>
-        ) : options.length === 0 ? (
-          <p className="mt-8 text-sm text-amber-300">
-            No itinerary options are available for this trip yet.
-          </p>
-        ) : (
-          <>
-          <BookingModePicker
-            value={bookingMode}
-            onChange={setBookingMode}
-            readiness={data.aiBooking}
-            disabled={choosingId !== null}
-          />
-          <ItineraryOptions
-            bookingMode={bookingMode}
-            options={options}
-            onChoose={chooseOption}
-            choosingId={choosingId}
-            disabled={choosingId !== null}
-            error={chooseError}
-          />
-          </>
-        ))}
-
-      {settingUp && (
-        <p className="mt-8 text-sm text-neutral-400">
-          Setting up {chosenLabel ? `“${chosenLabel}”` : "your plan"}…
-        </p>
-      )}
-      {readyToBook && !hasLinks && (
-        <p className="mt-6 text-sm text-neutral-400">
-          Your plan is set. Nothing in it needs booking.
-        </p>
-      )}
-      {readyToBook && hasLinks && (
-        <div className="mt-6 rounded-xl border border-emerald-800 bg-emerald-950/40 p-4">
-          <p className="text-sm font-medium text-emerald-200">Your plan is ready to book.</p>
-          <p className="mt-1 text-sm text-neutral-400">
-            We don&apos;t book anything for you. Use the links beside each flight, hotel, and tour
-            to book it yourself; they open the provider&apos;s site with your dates filled in where
-            the site supports it. Prices there are the real ones; ours are estimates.
-          </p>
-        </div>
-      )}
-      {trip.status === "BOOKING" && trip.itinerary.length > 0 && (
-        <p className="mt-6 text-sm text-neutral-400">
-          {aiMode
-            ? "Plan locked in — the AI is booking your flights, hotel, and activities…"
-            : "This trip was planned before the app switched to booking links, so it has no links. Plan a new trip to get them."}
-        </p>
-      )}
-
-      {trip.itinerary.length > 0 && (
-        <div className="mt-8 space-y-6">
-          {trip.itinerary.map((day: any) => (
-            <div key={day.id} className="rounded-xl border border-neutral-800 p-4">
-              <h2 className="text-sm font-semibold text-neutral-300">
-                Day {day.dayIndex + 1}
-                {day.date ? ` — ${new Date(day.date).toLocaleDateString()}` : ""}
-              </h2>
-              {day.summary && <p className="mt-1 text-sm text-neutral-500">{day.summary}</p>}
-              <ul className="mt-3 space-y-2">
-                {day.activities.map((activity: any) => (
-                  <li key={activity.id} className="flex items-start justify-between gap-3 text-sm">
-                    <div>
-                      <span className="font-medium">{activity.title}</span>
-                      {activity.description && (
-                        <p className="text-neutral-500">{activity.description}</p>
-                      )}
-                    </div>
-                    {activity.booking?.status === "LINK_OUT" ? (
-                      <BookingLinks links={activity.booking.links ?? []} title={activity.title} />
-                    ) : (
-                      activity.booking && (
-                        <div className="flex shrink-0 flex-col items-end gap-1.5">
-                          <StatusPill status={activity.booking.status} />
-                          {activity.booking.failureReason && (
-                            <p className="max-w-xs text-right text-xs text-neutral-500">
-                              {activity.booking.failureReason}
-                            </p>
-                          )}
-                          {/* AI mode: anything not booked keeps a do-it-yourself fallback. */}
-                          {(activity.booking.links?.length ?? 0) > 0 && (
-                            <BookingLinks
-                              links={activity.booking.links}
-                              title={activity.title}
-                              label="Book it yourself instead:"
-                            />
-                          )}
-                        </div>
-                      )
-                    )}
-                  </li>
-                ))}
-              </ul>
+          {(dateRange || trip.itinerary.length > 0 || planChosen) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-medium text-ink-700">
+              {(dateRange || trip.itinerary.length > 0) && (
+                <span className="inline-flex items-center gap-1.5 tabular-nums">
+                  <CalendarDays size={14} strokeWidth={1.75} aria-hidden="true" />
+                  {dateRange}
+                  {dateRange && trip.itinerary.length > 0 ? " · " : ""}
+                  {trip.itinerary.length > 0 ? `${trip.itinerary.length} days` : ""}
+                </span>
+              )}
+              {planChosen && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-2.5 py-1">
+                  {aiMode ? (
+                    <Bot size={14} strokeWidth={1.75} aria-hidden="true" />
+                  ) : (
+                    <ExternalLink size={14} strokeWidth={1.75} aria-hidden="true" />
+                  )}
+                  {aiMode ? "AI booking" : "You’re booking"}
+                </span>
+              )}
+              {planChosen && testMode && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-50 px-2.5 py-1 text-warning-700">
+                  <FlaskConical size={14} strokeWidth={1.75} aria-hidden="true" />
+                  Test mode
+                </span>
+              )}
             </div>
-          ))}
+          )}
         </div>
-      )}
+      </div>
 
-      <div className="mt-10">
-        <h2 className="text-sm font-semibold text-neutral-300">Notifications</h2>
-        <ul className="mt-2 space-y-1">
-          {trip.notifications.map((n: any) => (
-            <li key={n.id} className="text-sm text-neutral-400">
-              {n.message}
-            </li>
+      <div className="mx-auto max-w-5xl px-6 pb-24 md:px-8">
+        <div className="-mt-6">
+          <BudgetBar budget={budget} mode={planChosen ? (aiMode ? "AI" : "SELF") : null} testMode={testMode} />
+        </div>
+
+        {pendingClarification && (
+          <form
+            onSubmit={submitAnswer}
+            aria-labelledby="clarify-question"
+            aria-busy={answering}
+            className="mt-6 rounded-2xl border border-l-4 border-sunset-600/30 border-l-sunset-600 bg-sunset-50 p-5"
+          >
+            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-sunset-600">
+              <MessageCircleQuestion size={16} strokeWidth={1.75} aria-hidden="true" />
+              One quick question
+            </p>
+            <p id="clarify-question" className="mt-2 font-medium text-ink-900">
+              {pendingClarification.message}
+            </p>
+            <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+              <label htmlFor="clarify-answer" className="sr-only">
+                Your answer
+              </label>
+              <input
+                id="clarify-answer"
+                ref={answerRef}
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                placeholder="Your answer…"
+                className={INPUT_CLASSES}
+              />
+              <button
+                type="submit"
+                disabled={answering || !answer.trim()}
+                className={buttonClasses("primary", "shrink-0")}
+              >
+                {answering ? (
+                  <>
+                    <Loader2 size={16} strokeWidth={2} aria-hidden="true" className="motion-safe:animate-spin" />
+                    Sending…
+                  </>
+                ) : (
+                  <>
+                    <Send size={16} strokeWidth={2} aria-hidden="true" />
+                    Send
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {trip.status === "PLANNING" && (
+          <section className="mt-12">
+            <h2 className="flex items-center gap-2 font-display text-2xl font-semibold text-ink-900">
+              <Loader2 size={20} strokeWidth={1.75} aria-hidden="true" className="text-lagoon-600 motion-safe:animate-spin" />
+              Drafting a few versions of this trip
+            </h2>
+            <p role="status" className="mt-2 text-ink-700">
+              This takes a minute, and nothing is being booked.
+            </p>
+            {optionSkeletons}
+          </section>
+        )}
+
+        {planningFailed && (
+          <div className="mt-12 rounded-2xl border border-l-4 border-sand-200 border-l-warning-700 bg-white p-5 shadow-card">
+            <h2 className="flex items-center gap-2 font-display text-xl font-semibold text-ink-900">
+              <AlertTriangle size={20} strokeWidth={1.75} aria-hidden="true" className="text-warning-700" />
+              We couldn&apos;t draft options for this trip
+            </h2>
+            <p className="mt-2 text-sm text-ink-700">
+              We couldn&apos;t draft itinerary options for this trip. Try again with different dates or
+              budget.
+            </p>
+            <Link href="/" className={buttonClasses("secondary", "mt-4")}>
+              Plan a new trip
+            </Link>
+          </div>
+        )}
+
+        {isChoosing && alreadyChosen && (
+          <Alert tone="info" className="mt-12">
+            A plan has already been chosen for this trip.{aiMode ? " Booking is underway." : ""}
+          </Alert>
+        )}
+
+        {isChoosing &&
+          !alreadyChosen &&
+          (optionsError !== null ? (
+            <Alert tone="danger" className="mt-12">
+              <p>Couldn&apos;t load your itinerary options: {optionsError}</p>
+              <p className="mt-1 text-ink-700">
+                Your options are saved — this is just the page failing to fetch them.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setOptionsError(null);
+                  setOptionsReload((n) => n + 1);
+                }}
+                className={buttonClasses("secondary", "mt-3 px-3.5 py-2")}
+              >
+                <RefreshCw size={16} strokeWidth={2} aria-hidden="true" />
+                Try again
+              </button>
+            </Alert>
+          ) : options === null ? (
+            <section className="mt-12">
+              <p role="status" className="text-ink-700">
+                Loading your options…
+              </p>
+              {optionSkeletons}
+            </section>
+          ) : options.length === 0 ? (
+            <Alert tone="warning" className="mt-12" icon={<Compass size={18} strokeWidth={1.75} aria-hidden="true" />}>
+              No itinerary options are available for this trip yet.
+            </Alert>
+          ) : (
+            <ItineraryOptions
+              bookingMode={bookingMode}
+              options={options}
+              onChoose={chooseOption}
+              choosingId={choosingId}
+              disabled={choosingId !== null}
+              error={chooseError}
+              errorTone={chooseErrorTone}
+              modePicker={
+                hasBookables ? (
+                  <BookingModePicker
+                    value={bookingMode}
+                    onChange={setBookingMode}
+                    readiness={data.aiBooking}
+                    disabled={choosingId !== null}
+                  />
+                ) : undefined
+              }
+            />
           ))}
-        </ul>
+
+        {settingUp && (
+          <Alert
+            tone="info"
+            className="mt-8"
+            icon={<Loader2 size={18} strokeWidth={1.75} aria-hidden="true" className="motion-safe:animate-spin" />}
+          >
+            {aiMode
+              ? `Setting up ${chosenLabel ? `“${chosenLabel}”` : "your plan"} and starting on flights, hotels, and activities…${testSuffix}`
+              : `Saving ${chosenLabel ? `“${chosenLabel}”` : "your plan"}…`}
+          </Alert>
+        )}
+        {readyToBook && !hasLinks && (
+          <Alert tone="success" className="mt-8">
+            Your plan is set. Nothing in it needs booking.
+          </Alert>
+        )}
+        {readyToBook && hasLinks && (
+          <Alert tone="info" className="mt-8" icon={<ListChecks size={18} strokeWidth={1.75} aria-hidden="true" />}>
+            <p className="font-medium">Your plan is ready to book.</p>
+            <p className="mt-1 text-ink-700">
+              We don&apos;t book anything for you. Use the links beside each flight, hotel, and tour to book
+              it yourself; they open the provider&apos;s site with your dates filled in where the site
+              supports it. Prices there are the real ones; ours are estimates.
+            </p>
+          </Alert>
+        )}
+        {trip.status === "BOOKING" && trip.itinerary.length > 0 && (
+          <Alert
+            tone="info"
+            className="mt-8"
+            icon={
+              aiMode ? (
+                <Loader2 size={18} strokeWidth={1.75} aria-hidden="true" className="motion-safe:animate-spin" />
+              ) : undefined
+            }
+          >
+            {aiMode
+              ? `Plan locked in — the AI is booking your flights, hotel, and activities…${testSuffix}`
+              : "This trip was planned before the app switched to booking links, so it has no links. Plan a new trip to get them."}
+          </Alert>
+        )}
+
+        {trip.itinerary.length > 0 && (
+          <section aria-labelledby="itinerary-heading" className="mt-12">
+            <h2 id="itinerary-heading" className="font-display text-2xl font-semibold text-ink-900">
+              Your itinerary
+            </h2>
+            <ItineraryTimeline days={trip.itinerary} aiMode={aiMode} testMode={testMode} />
+          </section>
+        )}
+
+        <Notifications notifications={trip.notifications} testMode={testMode} />
       </div>
     </main>
   );
+}
+
+function formatDateRange(start?: string | null, end?: string | null): string {
+  if (!start) return "";
+  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", timeZone: "UTC" };
+  const s = new Date(start);
+  if (!end) return s.toLocaleDateString("en-US", { ...opts, year: "numeric" });
+  const e = new Date(end);
+  // Show the start year too when the trip crosses New Year, or "Dec 28 – Jan 4,
+  // 2027" reads as a December after the end date.
+  const sameYear = s.getUTCFullYear() === e.getUTCFullYear();
+  const startOpts = sameYear ? opts : { ...opts, year: "numeric" as const };
+  return `${s.toLocaleDateString("en-US", startOpts)} – ${e.toLocaleDateString("en-US", { ...opts, year: "numeric" })}`;
 }

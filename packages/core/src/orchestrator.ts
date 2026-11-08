@@ -156,9 +156,11 @@ export async function generateItineraryOptions(tripId: string): Promise<void> {
   );
 
   const drafts = [];
+  const variantKeys: string[] = [];
   for (const [index, outcome] of settled.entries()) {
     if (outcome.status === "fulfilled") {
       drafts.push(outcome.value);
+      variantKeys.push(ITINERARY_VARIANTS[index]!.key);
     } else {
       console.error(
         `generateItineraryOptions: variant "${ITINERARY_VARIANTS[index]?.key}" failed for trip ${tripId}:`,
@@ -179,7 +181,10 @@ export async function generateItineraryOptions(tripId: string): Promise<void> {
     return;
   }
 
-  const stored = await attachRealReviews(drafts, brief.destinations.join(", "));
+  // attachRealReviews preserves order, so variantKeys[i] belongs to stored[i].
+  const stored = (await attachRealReviews(drafts, brief.destinations.join(", "))).map(
+    (option, i) => ({ ...option, variant: variantKeys[i] }),
+  );
 
   await persistOptions(tripId, trip.currency, stored);
 
@@ -188,8 +193,8 @@ export async function generateItineraryOptions(tripId: string): Promise<void> {
     kind: "ITINERARY_READY",
     message:
       drafts.length === 1
-        ? "Your itinerary is ready to review. Choose it to start booking."
-        : `${drafts.length} itinerary options are ready. Pick the one you want and we'll start booking it.`,
+        ? "Your itinerary is ready to review."
+        : `${drafts.length} itinerary options are ready. Pick the one you want.`,
   });
 
   await prisma.trip.update({ where: { id: tripId }, data: { status: "CHOOSING" } });

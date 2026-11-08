@@ -443,3 +443,59 @@ default, or AI booking). What changed:
 Please also decide whether approve/skip actions exist. Flagged risk: the fallback link on
 SEARCHING items could lead to a double booking, and there's no "I booked this myself,
 stop" control yet.
+
+**2026-11-08 -- frontend-dev** -- FINISHED `frontend-dev/golden-hour`: built
+`docs/visual-design.md` ("Golden Hour") across `apps/web`. Merged the spec branch
+(`ux-designer/visual-refresh`) to `main` first; only conflict was this append-only log.
+- P0: `lucide-react`; Fraunces + Inter via `next/font` (`app/fonts.ts`); all §2 tokens in
+  `tailwind.config.js` (plus `warning-stripes` for SELF over-estimate and a `rise`
+  keyframe); `globals.css` rewritten (dark theme gone, reduced-motion block, selection);
+  shared primitives in `components/ui.tsx` (button classes, Card, Alert with tones,
+  input/chip classes, `fmtMoney`); `StatusPill` per §4.6 for trip + per-booking statuses
+  with "(test)" variants.
+- P1: landing (sunrise hero + original `ContourPattern`, prompt card, fill-and-focus example
+  chips, how-it-works); option cards with tier strips (value/balanced/elevated), price +
+  delta, facts row with "Pace: …", restyled ratings and honesty notes, locked/choosing
+  states, info vs danger error tone; booking-mode radio cards with test/live/unavailable
+  caveats; `BookingLinks` as "Search on {Provider}" link-outs + "Book it yourself instead"
+  fallback; header band with mode/test chips; `BudgetBar` in pre-choice / SELF (striped
+  estimate) / AI (solid booked + striped pending + estimate marker) modes; sunset
+  clarification card with focus management.
+- P2: `ItineraryTimeline` (day rail, kind icons, SELF link rows + "N to book", AI
+  per-item states with confirmation ref + copy, plain failure reasons with "show full
+  reason", "N need you"/"x of y booked"); `Notifications` icon list with relative times,
+  unread badge, `aria-live`, test chip; skeletons and error states per §4.5.
+- **backend-dev (same branch, the spec's blocker):** options now persist `variant`
+  (`StoredItineraryOption.variant`), so tier colors are real, not guessed. First live run
+  proved the point: the value variant failed and the two survivors were balanced +
+  elevated -- index-based tiers would have mislabelled both. Also fixed stale "we'll start
+  booking it" copy in the options-ready notification.
+Deviations from the spec, deliberate: AI card body says "anything it can't book comes back
+to you with links" (spec's "waits for your OK" implies an approve action that doesn't
+exist); no fallback links on SEARCHING rows (double-booking decision, logged earlier);
+notification deep-links to rows not done (notifications don't carry a booking id yet);
+"Things to book" checklist (v2) and the revise dock (needs the endpoint) not built.
+Verified by screenshots (headless Edge) of landing (1280, 520), options with real tiers,
+SELF trip, AI test-mode trip with failures; fixed from those: squeezed titles on rows with
+3 links, hard gradient edge, empty 3rd column with 2 options, long hotel names wrapping.
+Not verified: true 375px (headless Edge won't go below ~500px) -- qa-tester.
+`/code-review` (medium) on `frontend-dev/golden-hour` raised 10 findings; all fixed:
+- **Test labels on real charges (most serious):** `testMode` was `aiMode && !live`, so a
+  partly-live setup labelled real charges "Booked (test)" / "Nothing has been charged",
+  and a missing readiness flag defaulted to test. Now test labels require the flag
+  present AND no provider configured for production (`!anyLive`). Known limit, noted in
+  code: readiness is the server's current env, not the env at booking time.
+- Legacy SELF trips with real app-booked spend show real figures in `BudgetBar` (no more
+  "~$0"); SELF with no estimate shows the plain budget.
+- Booking status detail / failure reasons render for every non-link-out booking, not
+  only AI-mode trips (legacy rows lost their reasons).
+- Removed the unread badge (nothing marks notifications read, so it only grew).
+- Only the newest update is `aria-live`; the whole feed was live and re-announced every
+  relative timestamp each 4s poll.
+- "Lowest estimate" shown once (tier strip), not twice.
+- Clarification gating computed once before the early returns (focus effect and form
+  can't disagree).
+- Dead `Card` component replaced by a shared `CARD_CLASSES` used across components.
+- Date ranges show the start year when a trip crosses New Year.
+Re-verified: typecheck, 60 tests, build; screenshots of the AI test-mode trip and the
+options view after the fixes. Merged to `main` and pushed. Reviewed by `/code-review`.
