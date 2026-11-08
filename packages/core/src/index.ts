@@ -36,3 +36,4 @@ export type { DietConflict, DietTag, Dietary } from "./dietary";
 export { activityConflicts, diningView, localFoodView, planFood } from "./food";
 export type { DiningView, LocalFoodView, PlanFood } from "./food";
 export type { DiningDraft, LocalFood } from "./agents/types";
+export type { RestaurantCheck, RestaurantLookupStatus } from "./restaurantChecks";

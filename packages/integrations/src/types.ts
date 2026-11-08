@@ -98,6 +98,28 @@ export type PlaceReviewSummary = {
   source: "google_places";
 };
 
+/** Google's view of a named restaurant: whether it exists, is open, and its real rating. */
+export type RestaurantPlace = {
+  placeId: string;
+  name: string; // Google's name for the place, not the queried string
+  formattedAddress?: string;
+  location?: { lat: number; lon: number };
+  /** Google's businessStatus: OPERATIONAL | CLOSED_TEMPORARILY | CLOSED_PERMANENTLY (absent if unknown). */
+  businessStatus?: string;
+  rating?: number;
+  userRatingsTotal?: number;
+  googleMapsUri?: string;
+  /** Google's place types, e.g. ["restaurant", "food"]. */
+  types: string[];
+};
+
+export type RestaurantSearchParams = {
+  name: string; // e.g. "Taberna do Mercado"
+  city?: string; // e.g. "Lisbon"
+  /** Biases results towards the city (coordinates from destination lookup). */
+  near?: { lat: number; lon: number };
+};
+
 export type PlaceReviewLookupParams = {
   placeName: string; // a specific candidate name, e.g. "Memmo Alfama Hotel"
   locationHint?: string; // city/destination, to disambiguate chains

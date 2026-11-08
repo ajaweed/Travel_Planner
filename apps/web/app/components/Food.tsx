@@ -5,11 +5,11 @@
 //   traveller has dietary needs, we always say to confirm with the restaurant.
 // - A possible conflict found by our keyword check is shown, not hidden.
 
-import { AlertTriangle, ExternalLink, Info, Salad, UtensilsCrossed } from "lucide-react";
+import { AlertTriangle, BadgeCheck, ExternalLink, Info, Salad, SearchX, Star, UtensilsCrossed } from "lucide-react";
 import { CARD_CLASSES } from "./ui";
 
 // Type-only import: erased at build, so no server code reaches the client.
-import type { DietConflict, DiningView, LocalFoodView } from "@trip-planner/core";
+import type { DietConflict, DiningView, LocalFoodView, RestaurantCheck } from "@trip-planner/core";
 
 type Link = { provider: string; url: string };
 export type { DietConflict };
@@ -100,6 +100,45 @@ function MapLinks({ links, subject }: { links?: Link[]; subject: string }) {
   );
 }
 
+/**
+ * What Google Places says about a named restaurant. Only real data: a rating
+ * shows only when Google has one, and "not found" is worded as "couldn't
+ * find", not "doesn't exist".
+ */
+export function RestaurantCheckLine({ check }: { check?: RestaurantCheck }) {
+  if (!check) return null;
+  if (check.status === "NOT_FOUND") {
+    return (
+      <p className="flex items-start gap-1.5 text-xs font-medium text-warning-700">
+        <SearchX size={14} strokeWidth={1.75} aria-hidden="true" className="mt-px shrink-0" />
+        We couldn&apos;t find this place on Google. It may not exist or may have moved: check before you go.
+      </p>
+    );
+  }
+  if (check.status === "CLOSED_PERMANENTLY" || check.status === "CLOSED_TEMPORARILY") {
+    return (
+      <p className="flex items-start gap-1.5 text-xs font-medium text-danger-700">
+        <AlertTriangle size={14} strokeWidth={1.75} aria-hidden="true" className="mt-px shrink-0" />
+        Google lists {check.name} as {check.status === "CLOSED_PERMANENTLY" ? "permanently" : "temporarily"} closed. Pick
+        somewhere else nearby.
+      </p>
+    );
+  }
+  return (
+    <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-success-700">
+      <BadgeCheck size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
+      <span className="font-medium">{check.status === "OPEN" ? "Open, on Google" : "Found on Google"}</span>
+      {check.rating !== undefined && (
+        <span className="inline-flex items-center gap-1 tabular-nums text-ink-700">
+          · <Star size={12} strokeWidth={1.75} aria-hidden="true" className="fill-current text-sunset-600" />
+          {check.rating.toFixed(1)}
+          {check.userRatingsTotal !== undefined && ` (${check.userRatingsTotal.toLocaleString("en-US")} reviews)`}
+        </span>
+      )}
+    </p>
+  );
+}
+
 /** Meal details under an itinerary stop's title. */
 export function DiningDetail({ dining }: { dining: Dining }) {
   const facts = [MEAL_LABELS[dining.meal] ?? dining.meal, dining.cuisine, dining.priceLevel].filter(Boolean);
@@ -110,6 +149,7 @@ export function DiningDetail({ dining }: { dining: Dining }) {
         <span className="text-xs text-ink-500">{facts.join(" · ")}</span>
         <MapLinks links={dining.links} subject={dining.restaurantName ?? "this place"} />
       </p>
+      <RestaurantCheckLine check={dining.check} />
       {dining.mustTry && (
         <p className="text-ink-700">
           <span className="font-medium">Try:</span> {dining.mustTry}

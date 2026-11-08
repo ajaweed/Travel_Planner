@@ -1,6 +1,7 @@
 import type { PlaceReviewSummary } from "@trip-planner/integrations";
 import { z } from "zod";
 import { DietarySchema, NO_DIETARY } from "../dietary";
+import type { RestaurantCheck, RestaurantLookupStatus } from "../restaurantChecks";
 
 // --- TripBrief: what the ConciergeAgent extracts from free text ---
 
@@ -225,6 +226,13 @@ export type StoredItineraryOption = Omit<ItineraryOptionDraft, "days"> & {
    * generated before this field existed -- the UI shows a neutral header then.
    */
   variant?: string;
+  /**
+   * Google Places checks of the restaurants this option names, keyed by
+   * restaurantKey(name). Written only by our own lookup after generation --
+   * never by the model -- and absent for names that weren't checked.
+   */
+  restaurantChecks?: Record<string, RestaurantCheck>;
+  restaurantLookup?: RestaurantLookupStatus;
 };
 
 // --- Budget ---

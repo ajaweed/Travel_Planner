@@ -242,3 +242,71 @@ describe("lookupPlaceReviews", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("findRestaurant", () => {
+  it("sends name + city with a location bias and maps Google's fields", async () => {
+    let body: any;
+    let headers: any;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        body = JSON.parse(String(init?.body));
+        headers = init?.headers;
+        return jsonResponse({
+          places: [
+            {
+              id: "abc",
+              displayName: { text: "Taberna do Mercado" },
+              formattedAddress: "Lisboa, Portugal",
+              location: { latitude: 38.7, longitude: -9.14 },
+              businessStatus: "OPERATIONAL",
+              rating: 4.5,
+              userRatingCount: 1200,
+              googleMapsUri: "https://maps.google.com/?cid=1",
+              types: ["restaurant"],
+            },
+            { displayName: { text: "no id, skipped" } },
+          ],
+        });
+      }),
+    );
+    const { findRestaurant } = await import("./reviews");
+    const r = await findRestaurant({ name: "Taberna do Mercado", city: "Lisbon", near: { lat: 38.72, lon: -9.13 } });
+    expect(body.textQuery).toBe("Taberna do Mercado, Lisbon");
+    expect(body.locationBias.circle.center).toEqual({ latitude: 38.72, longitude: -9.13 });
+    expect(headers["X-Goog-FieldMask"]).toContain("places.businessStatus");
+    expect(r).toEqual({
+      ok: true,
+      data: [
+        {
+          placeId: "abc",
+          name: "Taberna do Mercado",
+          formattedAddress: "Lisboa, Portugal",
+          location: { lat: 38.7, lon: -9.14 },
+          businessStatus: "OPERATIONAL",
+          rating: 4.5,
+          userRatingsTotal: 1200,
+          googleMapsUri: "https://maps.google.com/?cid=1",
+          types: ["restaurant"],
+        },
+      ],
+    });
+  });
+
+  it("no results -> NO_AVAILABILITY; no key -> NOT_CONFIGURED without a call", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({})));
+    const { findRestaurant } = await import("./reviews");
+    expect(await findRestaurant({ name: "Nowhere" })).toEqual({ ok: false, reason: "NO_AVAILABILITY" });
+    delete process.env.GOOGLE_PLACES_API_KEY;
+    const f = vi.fn();
+    vi.stubGlobal("fetch", f);
+    expect((await findRestaurant({ name: "X" })).ok).toBe(false);
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("quota errors map to RATE_LIMITED", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => textResponse('{"error":{"status":"RESOURCE_EXHAUSTED"}}', 429)));
+    const { findRestaurant } = await import("./reviews");
+    expect((await findRestaurant({ name: "X", city: "Y" })) as { reason?: string }).toMatchObject({ reason: "RATE_LIMITED" });
+  });
+});

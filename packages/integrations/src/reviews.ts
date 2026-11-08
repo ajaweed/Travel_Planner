@@ -32,6 +32,8 @@ import type {
   PlaceReviewLookupParams,
   PlaceReviewSummary,
   ProviderResult,
+  RestaurantPlace,
+  RestaurantSearchParams,
 } from "./types";
 
 const TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
@@ -106,6 +108,94 @@ export async function lookupPlaceReviews(
       userRatingsTotal: details.data.userRatingsTotal ?? found.data.userRatingsTotal,
     },
   };
+}
+
+// Restaurant check: one Text Search with everything needed to judge the match
+// and show the result -- no Details call (saves a billable request per place).
+const RESTAURANT_FIELD_MASK = [
+  "places.id",
+  "places.displayName",
+  "places.formattedAddress",
+  "places.location",
+  "places.businessStatus",
+  "places.rating",
+  "places.userRatingCount",
+  "places.googleMapsUri",
+  "places.types",
+].join(",");
+
+// Biasing radius around the city centre. A bias, not a restriction: the
+// caller still checks distance, so a same-name place elsewhere can't pass.
+const NEAR_RADIUS_M = 30_000;
+
+/**
+ * Google's best candidates for a named restaurant in a city (up to 3), raw.
+ * Deciding whether one of them really IS the named place is the caller's job
+ * (packages/core/src/restaurantChecks.ts): Text Search always returns its
+ * nearest guess, which for a made-up name is some other restaurant.
+ */
+export async function findRestaurant(
+  params: RestaurantSearchParams,
+): Promise<ProviderResult<RestaurantPlace[]>> {
+  const key = apiKey();
+  if (!key) return notConfigured();
+  const query = [params.name, params.city].filter((x) => x?.trim()).join(", ");
+  if (!params.name.trim()) return { ok: false, reason: "NO_AVAILABILITY" };
+
+  try {
+    const res = await fetch(TEXT_SEARCH_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask": RESTAURANT_FIELD_MASK,
+      },
+      body: JSON.stringify({
+        textQuery: query,
+        pageSize: 3,
+        languageCode: "en",
+        ...(params.near
+          ? {
+              locationBias: {
+                circle: { center: { latitude: params.near.lat, longitude: params.near.lon }, radius: NEAR_RADIUS_M },
+              },
+            }
+          : {}),
+      }),
+    });
+    if (!res.ok) {
+      return mapHttpFailure(res.status, await safeText(res), "Places text search", res.headers.get("Retry-After"));
+    }
+    const json = (await res.json()) as { places?: RestaurantDto[] };
+    const places = (json.places ?? []).flatMap((p): RestaurantPlace[] =>
+      p.id && p.displayName?.text
+        ? [
+            {
+              placeId: p.id,
+              name: p.displayName.text,
+              formattedAddress: p.formattedAddress,
+              location:
+                p.location && Number.isFinite(p.location.latitude) && Number.isFinite(p.location.longitude)
+                  ? { lat: p.location.latitude!, lon: p.location.longitude! }
+                  : undefined,
+              businessStatus: p.businessStatus,
+              rating: p.rating,
+              userRatingsTotal: p.userRatingCount,
+              googleMapsUri: p.googleMapsUri,
+              types: p.types ?? [],
+            },
+          ]
+        : [],
+    );
+    return places.length ? { ok: true, data: places } : { ok: false, reason: "NO_AVAILABILITY" };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "PROVIDER_ERROR",
+      message: err instanceof Error ? err.message : String(err),
+      retryable: true,
+    };
+  }
 }
 
 async function textSearch(query: string, key: string): Promise<ProviderResult<PlaceReviewSummary>> {
@@ -303,4 +393,11 @@ type PlaceDetailsDto = {
   userRatingCount?: number;
   googleMapsUri?: string;
   reviews?: PlaceReviewDto[];
+};
+
+type RestaurantDto = PlaceDto & {
+  location?: { latitude?: number; longitude?: number };
+  businessStatus?: string;
+  googleMapsUri?: string;
+  types?: string[];
 };

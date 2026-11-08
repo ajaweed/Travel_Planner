@@ -6,12 +6,15 @@
 import { googleMapsSearch, type BookingLink } from "./bookingLinks";
 import { withDestination } from "./researchLinks";
 import { foodCity } from "./activityPlaces";
+import { restaurantKey, type RestaurantCheck } from "./restaurantChecks";
 import { type DietConflict, type Dietary, dietConflicts } from "./dietary";
 import { DiningDraftSchema, LocalFoodSchema, type DiningDraft, type LocalFood } from "./agents/types";
 
 export type DiningView = DiningDraft & {
-  /** Google Maps search for the named place (deterministic URL, never model-written). */
+  /** Google Maps link: the verified place itself, else a search for the name (never model-written). */
   links: BookingLink[];
+  /** Google Places check of the named restaurant, when one was made. */
+  check?: RestaurantCheck;
 };
 
 export type LocalFoodView = LocalFood & { conflicts: DietConflict[]; links: BookingLink[] };
@@ -20,13 +23,21 @@ export type LocalFoodView = LocalFood & { conflicts: DietConflict[]; links: Book
  * A meal as shown. Possible dietary conflicts are per stop, not per meal:
  * see `activityConflicts`.
  */
-export function diningView(dining: DiningDraft, city: string | undefined): DiningView {
+export function diningView(
+  dining: DiningDraft,
+  city: string | undefined,
+  checks?: Record<string, RestaurantCheck>,
+): DiningView {
   // Stored drafts predate some cleanup (e.g. a restaurant called "None"), so
   // re-run them through the schema on every read.
   const clean = DiningDraftSchema.safeParse(dining).data ?? { meal: "lunch" as const };
+  if (!clean.restaurantName) return { ...clean, links: [] };
+  const check = checks?.[restaurantKey(clean.restaurantName)];
+  const exact = check && check.status !== "NOT_FOUND" ? check.googleMapsUri : undefined;
   return {
     ...clean,
-    links: clean.restaurantName ? [googleMapsSearch(withDestination(clean.restaurantName, city))] : [],
+    check,
+    links: [exact ? { provider: "Google Maps", url: exact } : googleMapsSearch(withDestination(clean.restaurantName, city))],
   };
 }
 
@@ -56,6 +67,7 @@ type SavedDay = {
   }>;
 };
 type StoredDraftLike = {
+  restaurantChecks?: Record<string, RestaurantCheck>;
   days?: Array<{ dayIndex: number; activities?: Array<{ title?: string; dining?: DiningDraft }> }>;
   localFoods?: LocalFood[];
 };
@@ -94,7 +106,7 @@ export function planFood(
     for (const a of day.activities) {
       const d = draftDay?.activities?.[a.order];
       const meal = d?.dining && d.title === a.title ? d.dining : undefined;
-      if (meal) dining.set(a.id, diningView(meal, cityFor(a.id)));
+      if (meal) dining.set(a.id, diningView(meal, cityFor(a.id), draft.restaurantChecks));
       const c = activityConflicts({ ...a, bookable: { candidateName: a.candidateName }, dining: meal }, dietary);
       if (c.length) conflicts.set(a.id, c);
     }

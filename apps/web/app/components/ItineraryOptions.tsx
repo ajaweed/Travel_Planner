@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   AlertTriangle,
+  BadgeCheck,
   BedDouble,
   Bot,
   CalendarDays,
@@ -107,13 +108,17 @@ function foodSummary(option: ItineraryOption) {
   const activities = option.draft.days.flatMap((d) => d.activities);
   const meals = activities.flatMap((a) => (a.dining ? [a.dining] : []));
   const restaurants = [...new Set(meals.flatMap((m) => (m.restaurantName ? [m.restaurantName] : [])))];
+  // Google Places checks, per distinct restaurant.
+  const checked = new Map(meals.flatMap((m) => (m.restaurantName && m.check ? [[m.restaurantName, m.check] as const] : [])));
+  const verified = [...checked.values()].filter((c) => c.status === "OPEN" || c.status === "FOUND").length;
+  const closed = [...checked].filter(([, c]) => c.status === "CLOSED_PERMANENTLY" || c.status === "CLOSED_TEMPORARILY").map(([n]) => n);
   const foods = option.draft.localFoods ?? [];
   // Named, so the traveller can judge before choosing -- not just a count.
   const flagged = [
     ...activities.flatMap((a) => (a.conflicts?.length ? [{ name: a.title, conflicts: a.conflicts }] : [])),
     ...foods.flatMap((f) => (f.conflicts?.length ? [{ name: f.name, conflicts: f.conflicts }] : [])),
   ];
-  return { meals: meals.length, restaurants, foods, flagged };
+  return { meals: meals.length, restaurants, foods, flagged, checkedCount: checked.size, verified, closed };
 }
 
 /** Named HOTEL/TOUR candidates, which are the only items a rating applies to. */
@@ -388,6 +393,19 @@ export function ItineraryOptions({
                           }`}
                       </span>
                     </p>
+                    {food.checkedCount > 0 && (
+                      <p className="flex items-center gap-1.5 pl-6 text-xs text-ink-700">
+                        <BadgeCheck size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-success-700" />
+                        {food.verified} of {food.restaurants.length} restaurant{food.restaurants.length === 1 ? "" : "s"} found on
+                        Google
+                      </p>
+                    )}
+                    {food.closed.length > 0 && (
+                      <p className="flex items-start gap-1.5 pl-6 text-xs font-medium text-danger-700">
+                        <AlertTriangle size={14} strokeWidth={1.75} aria-hidden="true" className="mt-px shrink-0" />
+                        Listed as closed on Google: {food.closed.join(", ")}
+                      </p>
+                    )}
                     {food.foods.length > 0 && (
                       <p className="pl-6 text-xs text-ink-500">
                         Local food to try: {food.foods.slice(0, 4).map((f) => f.name).join(", ")}
@@ -415,7 +433,10 @@ export function ItineraryOptions({
 
                 {hotelExcerpt && (
                   <blockquote className="mt-4 border-l-2 border-sand-300 pl-3 text-sm italic text-ink-700">
-                    “{hotelExcerpt.text}”
+                    {/* Real Google reviews run long; four lines is enough to get the gist on a card. */}
+                    <span className="line-clamp-4" title={hotelExcerpt.text}>
+                      “{hotelExcerpt.text}”
+                    </span>
                     {hotelExcerpt.authorName && (
                       <footer className="mt-1 text-xs not-italic text-ink-500">
                         — {hotelExcerpt.authorName}
