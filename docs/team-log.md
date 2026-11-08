@@ -236,3 +236,19 @@ load-bearing for -- `searchHint` and `kind` stay strict because they decide what
 gets booked. The tool-input repair list stays `["days"]` on purpose: pushing
 `label` through `JSON.parse` would turn a numeric-looking label like "2024" into
 a number and fail validation that would otherwise have passed.
+
+**2026-11-08 -- backend-dev** -- FINISHED and merged `backend-dev/current-date-context`
+to `main`. Bug found by running the app: "Barcelona in March", asked in November 2026,
+produced three itineraries dated March 2025 -- the agents had no clock, so the model
+guessed the year, and every day date and flight/hotel `searchHint` inherited it (real
+provider searches would fail or return nothing for past dates). Fix: concierge and
+itinerary prompts now include today's date, and `rollBriefForward()`
+(`packages/core/src/agents/tripDates.ts`) deterministically moves any past `startDate`
+(+ `endDate`, keeping trip length) forward by whole years before the brief leaves the
+concierge -- both the complete and partial-brief paths, so `answerClarification` is
+covered. 8 new tests (32 total); typecheck passes; re-ran Barcelona live -> all three
+options dated 2027-03-15..19, flight hints included. `/code-review` (low) raised two
+findings: the itinerary prompt edit hadn't actually applied (real -- fixed in 07fc4bd);
+`partialBrief` possibly undefined (not real -- the schema requires it). Reviewed by
+`/code-review`. Handoff: none required; anyone adding a new agent that reasons about
+dates should take `todayISO()` from `tripDates.ts` rather than `new Date()` inline.
