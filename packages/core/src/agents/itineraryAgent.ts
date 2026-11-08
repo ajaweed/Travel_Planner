@@ -283,9 +283,13 @@ async function attemptItinerary(brief: TripBrief, variant: ItineraryVariant): Pr
     ],
   });
 
+  // Truncation isn't a one-off: an identical retry would hit the same cap,
+  // doubling cost and latency for nothing. Fail this variant straight away.
+  const ErrorType = res.stop_reason === "max_tokens" ? Error : InvalidItineraryError;
+
   const toolUse = res.content.find((b) => b.type === "tool_use");
   if (!toolUse || toolUse.type !== "tool_use") {
-    throw new InvalidItineraryError(
+    throw new ErrorType(
       `ItineraryAgent did not produce a tool call for variant "${variant.key}" (stop_reason: ${res.stop_reason}).`,
     );
   }
@@ -306,7 +310,7 @@ async function attemptItinerary(brief: TripBrief, variant: ItineraryVariant): Pr
       `ItineraryAgent raw tool_use.input (variant ${variant.key}, stop_reason ${res.stop_reason}):`,
       JSON.stringify(rawInput),
     );
-    throw new InvalidItineraryError(
+    throw new ErrorType(
       `ItineraryAgent produced an invalid itinerary for variant "${variant.key}": ${parsed.error.message}`,
     );
   }

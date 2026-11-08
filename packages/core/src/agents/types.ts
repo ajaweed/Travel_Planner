@@ -79,14 +79,15 @@ export type BookableDraft = z.infer<typeof BookableDraftSchema>;
 /**
  * An optional text field the model sometimes fills with a placeholder
  * ("None", "N/A", "-") instead of leaving it out. Those become absent, so a
- * card never shows a restaurant called "None".
+ * card never shows a restaurant called "None". Over-long text is truncated,
+ * never rejected: a wordy dietary note must not cost the meal it belongs to.
  */
 const optionalText = (max: number) =>
   z.preprocess((v) => {
     if (typeof v !== "string") return v;
     const t = v.trim();
-    return t === "" || /^(none|null|n\/?a|unknown|tbd|-+|—)$/i.test(t) ? undefined : t;
-  }, z.string().max(max).optional()).catch(undefined);
+    return t === "" || /^(none|null|n\/?a|unknown|tbd|-+|—)$/i.test(t) ? undefined : t.slice(0, max);
+  }, z.string().optional()).catch(undefined);
 
 /**
  * A meal stop. Display-only (there's no reservation provider), so parsing is
@@ -100,7 +101,7 @@ export const DiningDraftSchema = z.object({
   /** The local dish to order there. */
   mustTry: optionalText(160),
   /** How it fits the traveller's dietary needs, and what to confirm. */
-  dietaryNote: z.string().max(300).optional(),
+  dietaryNote: optionalText(400),
   priceLevel: z.enum(["$", "$$", "$$$", "$$$$"]).optional().catch(undefined),
 });
 export type DiningDraft = z.infer<typeof DiningDraftSchema>;
@@ -125,10 +126,10 @@ export type ItineraryDayDraft = z.infer<typeof ItineraryDayDraftSchema>;
 
 /** A local dish or drink worth trying, for the trip's "Local food to try" list. */
 export const LocalFoodSchema = z.object({
-  name: z.string().min(1).max(80),
-  description: z.string().max(300).optional(),
+  name: z.preprocess((v) => (typeof v === "string" ? v.trim().slice(0, 80) : v), z.string().min(1)),
+  description: optionalText(300),
   /** e.g. "Usually made with pork; ask for the chicken version." */
-  dietaryNote: z.string().max(300).optional(),
+  dietaryNote: optionalText(400),
   /** Where to try it, if the model can name a real place. */
   whereToTry: optionalText(120),
 });

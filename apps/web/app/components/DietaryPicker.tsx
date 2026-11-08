@@ -2,8 +2,8 @@
 
 import { useId, useState } from "react";
 import { Check, ChevronDown, Salad } from "lucide-react";
-// Deep import: dependency-light module (zod only); the package index pulls in server code.
-import { DIET_LABELS, DIET_TAGS, type DietTag } from "@trip-planner/core/src/dietary";
+// Deep import of a dependency-free module: the package index pulls in server code.
+import { DIET_LABELS, DIET_TAGS, type DietTag } from "@trip-planner/core/src/dietTags";
 import { FOCUS_RING, INPUT_CLASSES } from "./ui";
 
 export type DietaryChoice = { requirements: DietTag[]; allergies: string[] };
@@ -17,7 +17,7 @@ export function parseAllergies(text: string): string[] {
 
 /**
  * Optional dietary needs on the landing form. Collapsed by default so the
- * prompt stays the main thing; opens itself if anything is chosen. What's
+ * prompt stays the main thing; the toggle shows a count of what's added. What's
  * ticked here is merged into the trip brief in code, so it can't get lost.
  */
 export function DietaryPicker({

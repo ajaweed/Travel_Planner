@@ -3,7 +3,9 @@
 // dietary conflicts. Built from the stored option draft, so it applies to
 // existing plans without a migration and improves when the checks do.
 
-import type { BookingLink } from "./bookingLinks";
+import { googleMapsSearch, type BookingLink } from "./bookingLinks";
+import { withDestination } from "./researchLinks";
+import { foodCity } from "./activityPlaces";
 import { type DietConflict, type Dietary, dietConflicts } from "./dietary";
 import { DiningDraftSchema, LocalFoodSchema, type DiningDraft, type LocalFood } from "./agents/types";
 
@@ -13,18 +15,6 @@ export type DiningView = DiningDraft & {
 };
 
 export type LocalFoodView = LocalFood & { conflicts: DietConflict[]; links: BookingLink[] };
-
-function mapsSearch(query: string): BookingLink {
-  const u = new URL("https://www.google.com/maps/search/");
-  u.searchParams.set("api", "1");
-  u.searchParams.set("query", query);
-  return { provider: "Google Maps", url: u.toString() };
-}
-
-function withCity(name: string, city: string | undefined): string {
-  const c = city?.split(",")[0]?.trim();
-  return c && !name.toLowerCase().includes(c.toLowerCase()) ? `${name}, ${c}` : name;
-}
 
 /**
  * A meal as shown. Possible dietary conflicts are per stop, not per meal:
@@ -36,7 +26,7 @@ export function diningView(dining: DiningDraft, city: string | undefined): Dinin
   const clean = DiningDraftSchema.safeParse(dining).data ?? { meal: "lunch" as const };
   return {
     ...clean,
-    links: clean.restaurantName ? [mapsSearch(withCity(clean.restaurantName, city))] : [],
+    links: clean.restaurantName ? [googleMapsSearch(withDestination(clean.restaurantName, city))] : [],
   };
 }
 
@@ -50,7 +40,7 @@ export function localFoodView(food: LocalFood, dietary: Dietary | undefined, cit
   return {
     ...food,
     conflicts: dietConflicts(text, dietary),
-    links: [mapsSearch(withCity(namedPlace ?? food.name, city))],
+    links: [googleMapsSearch(withDestination(namedPlace ?? food.name, city))],
   };
 }
 
@@ -88,7 +78,7 @@ export function planFood(
   selectedDraftJson: string | null | undefined,
   dietary: Dietary | undefined,
   cityFor: (activityId: string) => string | undefined,
-  tripCity: string | undefined,
+  destinations: string[],
 ): PlanFood {
   let draft: StoredDraftLike = {};
   try {
@@ -111,7 +101,7 @@ export function planFood(
   }
   const localFoods = (Array.isArray(draft.localFoods) ? draft.localFoods : [])
     .filter((f) => f && typeof f.name === "string")
-    .map((f) => localFoodView(f, dietary, tripCity));
+    .map((f) => localFoodView(f, dietary, foodCity(f, destinations)));
   return { dining, conflicts, localFoods };
 }
 

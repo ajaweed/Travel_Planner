@@ -20,7 +20,7 @@ export { getDestinationPhotos } from "./destinationPhoto";
 export type { DestinationPhoto } from "./destinationPhoto";
 export { getStopPhotos } from "./stopPhotos";
 export type { Stop } from "./stopPhotos";
-export { resolveActivityPlaces } from "./activityPlaces";
+export { foodCity, resolveActivityPlaces, resolveDraftCities } from "./activityPlaces";
 export type { ActivityPlace } from "./activityPlaces";
 export {
   DIET_LABELS,

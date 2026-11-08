@@ -32,6 +32,17 @@ describe("normalizeDietTag", () => {
   it("drops unknown wording", () => {
     expect(DietarySchema.parse({ requirements: ["paleo", "halal"] }).requirements).toEqual(["halal"]);
   });
+
+  it("review fix: one string naming several needs keeps them all", () => {
+    expect(DietarySchema.parse({ requirements: ["vegan and gluten-free"] }).requirements).toEqual(["vegan", "gluten_free"]);
+  });
+
+  it("review fix: one bad field never wipes the rest", () => {
+    const d = DietarySchema.parse({ requirements: ["halal", 7], allergies: ["Peanuts", null, "sesame, soy"], notes: "x".repeat(400) });
+    expect(d.requirements).toEqual(["halal"]);
+    expect(d.allergies).toEqual(["peanuts", "sesame", "soy"]);
+    expect(d.notes).toHaveLength(300);
+  });
 });
 
 describe("mergeDietary", () => {
@@ -116,6 +127,29 @@ describe("dietConflicts", () => {
     expect(needs("Confirm whether the satay sauce has peanuts", diet([], ["peanuts"]))).toEqual([]);
     // ...but "ask for" still recommends.
     expect(needs("Ask for the bifana", diet(["halal"]))).toContain("Halal");
+  });
+
+  it("review fix: a check clause doesn't hide what comes after it, or a recommendation", () => {
+    expect(needs("Check out the bifana if you're hungry", diet(["halal"]))).toContain("Halal");
+    expect(
+      dietConflicts("Confirm whether they're open, then order the bifana and a glass of wine", diet(["halal"]))[0]!.words.sort(),
+    ).toEqual(["bifana", "wine"]);
+    expect(needs("Ask about the wine pairing", diet(["halal"]))).toContain("Halal");
+  });
+
+  it("review fix: allergen lookup is whole-word and always includes the allergen itself", () => {
+    expect(needs("Coconut curry", diet([], ["coconut"]))).toEqual(["Allergy: coconut"]);
+    expect(needs("Almond cake", diet([], ["coconut"]))).toEqual([]);
+    expect(needs("Grilled eggplant", diet([], ["eggplant"]))).toEqual(["Allergy: eggplant"]);
+    expect(needs("Omelette", diet([], ["eggplant"]))).toEqual([]);
+    expect(needs("Spiced nutmeg cake", diet([], ["nutmeg"]))).toEqual(["Allergy: nutmeg"]);
+    expect(needs("Peanut noodles", diet([], ["peanut allergy"]))).toEqual(["Allergy: peanut allergy"]);
+  });
+
+  it("review fix: 'free' after punctuation isn't a negation", () => {
+    expect(needs("Port wine, free entry", diet(["halal"]))).toContain("Halal");
+    expect(needs("Bifana stall, free samples", diet(["halal"]))).toContain("Halal");
+    expect(needs("A pork - free menu", diet(["halal"]))).toEqual([]);
   });
 
   it("accented and plain spellings count once", () => {

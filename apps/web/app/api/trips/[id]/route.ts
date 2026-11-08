@@ -43,6 +43,9 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   // stored search params (never stored URLs), so improving a link builder
   // improves every existing trip without a migration.
   const destinations = destinationsFromBrief(trip.briefJson);
+  // Independent reads, started together with the selected-option lookup below.
+  const budgetAndUnread = Promise.all([getBudgetStatus(trip.id), getUnreadNotifications(trip.id)]);
+  void budgetAndUnread.catch(() => {}); // awaited below; don't leave it unhandled if we throw first
   // Each activity's city (multi-city aware) and stored search params.
   const places = resolveActivityPlaces(trip.itinerary, destinations);
   const dietary = dietaryFromBrief(trip.briefJson);
@@ -68,7 +71,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     selected?.draftJson,
     dietary,
     (id) => places.get(id)?.city,
-    destinations[0],
+    destinations,
   );
 
   const itinerary = trip.itinerary.map((day) => ({
@@ -109,10 +112,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     }),
   }));
 
-  const [budget, unread] = await Promise.all([
-    getBudgetStatus(trip.id),
-    getUnreadNotifications(trip.id),
-  ]);
+  const [budget, unread] = await budgetAndUnread;
 
   return NextResponse.json({
     trip: { ...trip, itinerary },

@@ -79,7 +79,8 @@ function containsWord(text: string, word: string): boolean {
   return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(word)}($|[^\\p{L}\\p{N}])`, "iu").test(text);
 }
 
-function query(subject: string, destination: string | undefined): string {
+/** "<subject> <city>", unless the subject already names the city (whole word). Shared with food links. */
+export function withDestination(subject: string, destination: string | undefined): string {
   const dest = destination?.split(",")[0]?.trim();
   return dest && !containsWord(subject, dest) ? `${subject} ${dest}` : subject;
 }
@@ -96,7 +97,7 @@ export function buildResearchLinks(s: ResearchSubject): BookingLink[] {
 
   const subject = name ?? simplifyTitle(s.title);
   if (!subject) return [];
-  const q = query(subject, destination);
+  const q = withDestination(subject, destination);
 
   const google = new URL("https://www.google.com/search");
   google.searchParams.set("q", q);

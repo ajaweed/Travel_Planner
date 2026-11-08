@@ -8,7 +8,7 @@ const halalPeanut = DietarySchema.parse({ requirements: ["halal"], allergies: ["
 describe("diningView", () => {
   it("links the named restaurant in its city", () => {
     const v = diningView({ meal: "lunch", restaurantName: "O Trevo", mustTry: "Bifana" }, "Lisbon, Portugal");
-    expect(v.links[0]!.url).toBe("https://www.google.com/maps/search/?api=1&query=O+Trevo%2C+Lisbon");
+    expect(v.links[0]!.url).toBe("https://www.google.com/maps/search/?api=1&query=O+Trevo+Lisbon");
   });
 
   it("placeholder names like 'None' are treated as absent, even in old stored drafts", () => {
@@ -48,9 +48,9 @@ describe("activityConflicts", () => {
 describe("localFoodView", () => {
   it("searches a named place, else the dish, in the trip city", () => {
     const named = localFoodView({ name: "Pastel de nata", whereToTry: "Manteigaria" }, undefined, "Lisbon");
-    expect(named.links[0]!.url).toContain("query=Manteigaria%2C+Lisbon");
+    expect(named.links[0]!.url).toContain("query=Manteigaria+Lisbon");
     const generic = localFoodView({ name: "Pastel de nata", whereToTry: "any pastelaria" }, undefined, "Lisbon");
-    expect(generic.links[0]!.url).toContain("query=Pastel+de+nata%2C+Lisbon");
+    expect(generic.links[0]!.url).toContain("query=Pastel+de+nata+Lisbon");
   });
 
   it("flags allergens", () => {
@@ -84,10 +84,10 @@ describe("planFood", () => {
   ];
 
   it("attaches meals by day and position, lists local foods, and checks every stop", () => {
-    const f = planFood(saved, JSON.stringify(draft), undefined, () => "Lisbon", "Lisbon");
+    const f = planFood(saved, JSON.stringify(draft), undefined, () => "Lisbon", ["Lisbon"]);
     expect([...f.dining.keys()]).toEqual(["a2"]);
     const withWine = [{ dayIndex: 0, activities: [{ id: "w", order: 5, title: "Port wine cellar visit" }] }];
-    expect(planFood(withWine, null, halalPeanut, () => "Porto", "Porto").conflicts.get("w")).toEqual([
+    expect(planFood(withWine, null, halalPeanut, () => "Porto", ["Porto"]).conflicts.get("w")).toEqual([
       { need: "Halal", words: ["wine", "port wine"] },
     ]);
     expect(f.dining.get("a2")?.restaurantName).toBe("Tasca X");
@@ -96,12 +96,12 @@ describe("planFood", () => {
 
   it("never attaches a meal to a different activity (title must match)", () => {
     const edited = [{ dayIndex: 0, activities: [{ id: "a1", order: 0, title: "Flight" }, { id: "a2", order: 1, title: "Museum" }] }];
-    expect(planFood(edited, JSON.stringify(draft), undefined, () => "Lisbon", "Lisbon").dining.size).toBe(0);
+    expect(planFood(edited, JSON.stringify(draft), undefined, () => "Lisbon", ["Lisbon"]).dining.size).toBe(0);
   });
 
   it("survives missing or broken drafts", () => {
-    expect(planFood(saved, null, undefined, () => undefined, undefined).localFoods).toEqual([]);
-    expect(planFood(saved, "{not json", undefined, () => undefined, undefined).dining.size).toBe(0);
+    expect(planFood(saved, null, undefined, () => undefined, []).localFoods).toEqual([]);
+    expect(planFood(saved, "{not json", undefined, () => undefined, []).dining.size).toBe(0);
   });
 });
 

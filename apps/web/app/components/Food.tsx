@@ -8,27 +8,14 @@
 import { AlertTriangle, ExternalLink, Info, Salad, UtensilsCrossed } from "lucide-react";
 import { CARD_CLASSES } from "./ui";
 
+// Type-only import: erased at build, so no server code reaches the client.
+import type { DietConflict, DiningView, LocalFoodView } from "@trip-planner/core";
+
 type Link = { provider: string; url: string };
-export type DietConflict = { need: string; words: string[] };
-
-export type Dining = {
-  meal: string;
-  restaurantName?: string;
-  cuisine?: string;
-  mustTry?: string;
-  dietaryNote?: string;
-  priceLevel?: string;
-  links?: Link[];
-};
-
-export type LocalFood = {
-  name: string;
-  description?: string;
-  dietaryNote?: string;
-  whereToTry?: string;
-  conflicts?: DietConflict[];
-  links?: Link[];
-};
+export type { DietConflict };
+/** As served by the trip/options routes (links attached, conflicts per stop). */
+export type Dining = DiningView;
+export type LocalFood = LocalFoodView;
 
 const MEAL_LABELS: Record<string, string> = {
   breakfast: "Breakfast",
@@ -149,8 +136,8 @@ export function LocalFoodSection({ foods, dietary }: { foods?: LocalFood[]; diet
       </h2>
       <DietaryBadges labels={dietary} className="mt-2" />
       <ul className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {foods.map((f) => (
-          <li key={f.name} className={`flex flex-col p-4 ${CARD_CLASSES}`}>
+        {foods.map((f, i) => (
+          <li key={`${f.name}-${i}`} className={`flex flex-col p-4 ${CARD_CLASSES}`}>
             <h3 className="font-display text-lg font-semibold text-ink-900">{f.name}</h3>
             {f.description && <p className="mt-1 text-sm text-ink-700">{f.description}</p>}
             {f.dietaryNote && (

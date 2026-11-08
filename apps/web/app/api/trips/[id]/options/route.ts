@@ -8,8 +8,10 @@ import {
   destinationFor,
   destinationsFromBrief,
   diningView,
+  foodCity,
   listItineraryOptions,
   localFoodView,
+  resolveDraftCities,
 } from "@trip-planner/core";
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -25,16 +27,17 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     // links so the traveller can vet them before choosing. Only those items
     // are touched; everything else passes through by reference.
     for (const option of options) {
-      for (const day of option.draft.days) {
-        day.activities = day.activities.map((raw) => {
+      // Each stop's city, multi-city aware (same rule as the trip route).
+      const cities = resolveDraftCities(option.draft.days, destinations);
+      for (const [d, day] of option.draft.days.entries()) {
+        day.activities = day.activities.map((raw, a) => {
           // Every stop is checked against the traveller's dietary needs (the
           // agent can slip a wine tour into a halal plan), recomputed on read.
           const conflicts = activityConflicts(raw, dietary);
           const activity = conflicts.length ? { ...raw, conflicts } : raw;
           // Meals: a map link for the named place.
           if (activity.dining) {
-            const city = destinationFor(destinations, activity.dining.restaurantName, activity.title) ?? destinations[0];
-            return { ...activity, dining: diningView(activity.dining, city) };
+            return { ...activity, dining: diningView(activity.dining, cities[d]?.[a]) };
           }
           const b = activity.bookable;
           if (!b?.candidateName || (b.kind !== "HOTEL" && b.kind !== "TOUR")) return activity;
@@ -48,7 +51,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
               research: buildResearchLinks({
                 title: activity.title,
                 candidateName: shownName,
-                destination: destinationFor(destinations, b.candidateName, activity.title, b.searchHint),
+                destination: cities[d]?.[a] ?? destinationFor(destinations, b.candidateName, activity.title, b.searchHint),
                 kind: b.kind,
               }),
             },
@@ -59,7 +62,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
     for (const option of options) {
       const foods = Array.isArray(option.draft.localFoods) ? option.draft.localFoods : [];
-      option.draft.localFoods = foods.map((f) => localFoodView(f, dietary, destinations[0]));
+      option.draft.localFoods = foods.map((f) => localFoodView(f, dietary, foodCity(f, destinations)));
     }
 
     return NextResponse.json({ options, dietary: dietaryLabels(dietary) });

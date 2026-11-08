@@ -129,6 +129,11 @@ function tourLinks(p: LinkSearchParams): BookingLink[] {
   ];
 }
 
+/** A Google Maps search link (deterministic; shared by booking and food links). */
+export function googleMapsSearch(query: string): BookingLink {
+  return { provider: "Google Maps", url: url("https://www.google.com/maps/search/", { api: 1, query }) };
+}
+
 function mapLink(p: LinkSearchParams, fallbackQuery?: string): BookingLink[] {
   if (!p.candidateName && !fallbackQuery) return [];
   const query = p.candidateName
@@ -136,12 +141,7 @@ function mapLink(p: LinkSearchParams, fallbackQuery?: string): BookingLink[] {
       ? `${p.candidateName}, ${p.destination}`
       : p.candidateName
     : fallbackQuery!;
-  return [
-    {
-      provider: "Google Maps",
-      url: url("https://www.google.com/maps/search/", { api: 1, query }),
-    },
-  ];
+  return [googleMapsSearch(query)];
 }
 
 /** Search links for one bookable item, best option first. */

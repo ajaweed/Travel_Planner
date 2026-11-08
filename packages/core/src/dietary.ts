@@ -10,63 +10,63 @@
 
 import { z } from "zod";
 
-export const DIET_TAGS = [
-  "halal",
-  "kosher",
-  "vegetarian",
-  "vegan",
-  "pescatarian",
-  "gluten_free",
-  "dairy_free",
-  "no_pork",
-  "no_alcohol",
-] as const;
-export type DietTag = (typeof DIET_TAGS)[number];
+import { DIET_LABELS, DIET_TAGS, type DietTag } from "./dietTags";
 
-export const DIET_LABELS: Record<DietTag, string> = {
-  halal: "Halal",
-  kosher: "Kosher",
-  vegetarian: "Vegetarian",
-  vegan: "Vegan",
-  pescatarian: "Pescatarian",
-  gluten_free: "Gluten-free",
-  dairy_free: "Dairy-free",
-  no_pork: "No pork",
-  no_alcohol: "No alcohol",
-};
+export { DIET_LABELS, DIET_TAGS, type DietTag };
 
-/** Maps loose wording ("gluten free", "Halal food", "celiac") onto a tag. */
-export function normalizeDietTag(raw: string): DietTag | undefined {
+const TAG_PATTERNS: Array<[DietTag, RegExp]> = [
+  ["halal", /\bhalal\b/],
+  ["kosher", /\bkosher\b/],
+  ["vegan", /\bvegan\b/],
+  ["vegetarian", /\bvegetarian\b|\bveggie\b/],
+  ["pescatarian", /\bpescatarian\b|\bpescetarian\b/],
+  ["gluten_free", /\bgluten\b|\bcoeliac\b|\bceliac\b/],
+  ["dairy_free", /\bdairy\b|\blactose\b/],
+  ["no_pork", /\bpork\b/],
+  ["no_alcohol", /\balcohol\b|\bteetotal\b|\bsober\b/],
+];
+
+/**
+ * Every tag a piece of loose wording names: "vegan and gluten-free" ->
+ * ["vegan", "gluten_free"]; "Halal food" -> ["halal"]; unknown -> [].
+ */
+export function normalizeDietTags(raw: string): DietTag[] {
   const t = raw.toLowerCase().replace(/[^a-z]+/g, " ").trim();
-  if (/\bhalal\b/.test(t)) return "halal";
-  if (/\bkosher\b/.test(t)) return "kosher";
-  if (/\bvegan\b/.test(t)) return "vegan";
-  if (/\bvegetarian\b|\bveggie\b/.test(t)) return "vegetarian";
-  if (/\bpescatarian\b|\bpescetarian\b/.test(t)) return "pescatarian";
-  if (/\bgluten\b|\bcoeliac\b|\bceliac\b/.test(t)) return "gluten_free";
-  if (/\bdairy\b|\blactose\b/.test(t)) return "dairy_free";
-  if (/\bpork\b/.test(t)) return "no_pork";
-  if (/\balcohol\b|\bteetotal\b|\bsober\b/.test(t)) return "no_alcohol";
-  return undefined;
+  return TAG_PATTERNS.filter(([, re]) => re.test(t)).map(([tag]) => tag);
 }
 
+/** The first tag the wording names (see normalizeDietTags). */
+export function normalizeDietTag(raw: string): DietTag | undefined {
+  return normalizeDietTags(raw)[0];
+}
+
+// Lenient on purpose, field by field: a model that returns one odd value
+// (a number in a list, an over-long note) must not cost the traveller the
+// needs it got right. Junk is dropped or truncated, never fatal.
+const strings = (v: unknown): string[] =>
+  (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((x): x is string => typeof x === "string");
+
 const tagList = z
-  .array(z.string())
-  .default([])
-  .transform((xs) => [...new Set(xs.map(normalizeDietTag).filter((t): t is DietTag => !!t))]);
+  .unknown()
+  .transform((v) => [...new Set(strings(v).flatMap(normalizeDietTags))]);
 
 const allergyList = z
-  .array(z.string())
-  .default([])
-  .transform((xs) => [...new Set(xs.map((x) => x.trim().toLowerCase()).filter((x) => x.length > 0 && x.length <= 40))].slice(0, 10));
+  .unknown()
+  .transform((v) =>
+    [...new Set(strings(v).flatMap((x) => x.split(/[,;]/)).map((x) => x.trim().toLowerCase()).filter((x) => x.length > 0))]
+      .map((x) => x.slice(0, 40))
+      .slice(0, 10),
+  );
 
 export const DietarySchema = z.object({
   /** Diets/religious rules, as tags (unknown wording is dropped; see notes). */
   requirements: tagList,
   /** Free text allergens, lower-cased: "peanuts", "shellfish", "sesame". */
   allergies: allergyList,
-  /** Anything that didn't fit the above ("no spicy food"), verbatim. */
-  notes: z.string().max(300).optional(),
+  /** Anything that didn't fit the above ("no spicy food"), verbatim, up to 300 chars. */
+  notes: z
+    .unknown()
+    .transform((v) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 300) : undefined)),
 });
 export type Dietary = z.infer<typeof DietarySchema>;
 
@@ -148,19 +148,28 @@ const PEANUT = ["peanut", "peanuts", "satay", "groundnut", "pad thai", "kare kar
 const SESAME = ["sesame", "tahini", "tahina", "hummus", "halva", "halwa", "simit", "gomasio", "za'atar", "zaatar"];
 const SOY = ["soy", "soya", "tofu", "edamame", "miso", "tempeh", "soy sauce", "natto", "shoyu", "teriyaki"];
 
-// Allergy words -> what to look for. Matched by "does the allergy text
-// contain this key", so "tree nuts", "nut allergy", "peanut" all work.
+// Allergy wording -> extra words to look for. Whole-word patterns, so
+// "coconut", "nutmeg" and "eggplant" don't count as nut/egg allergies. The
+// allergen's own words are always searched too ("coconut" finds coconut).
 const ALLERGEN_WORDS: Array<[RegExp, string[]]> = [
-  [/peanut|groundnut/, PEANUT],
-  [/nut|almond|walnut|hazelnut|pistachio|cashew|pecan/, [...NUTS, ...PEANUT]],
-  [/shellfish|shrimp|prawn|crab|lobster|crustacean|mollus|clam|mussel|oyster|scallop|squid|octopus/, SHELLFISH],
-  [/fish/, FISH],
-  [/sesame/, SESAME],
-  [/dairy|milk|lactose|cheese/, DAIRY],
-  [/egg/, EGG],
-  [/gluten|wheat|celiac|coeliac/, GLUTEN],
-  [/soy|soya/, SOY],
+  [/\b(peanuts?|groundnuts?)\b/, PEANUT],
+  [/\b(tree ?nuts?|nuts?|almonds?|walnuts?|hazelnuts?|pistachios?|cashews?|pecans?|macadamias?)\b/, [...NUTS, ...PEANUT]],
+  [/\b(shellfish|shrimps?|prawns?|crabs?|lobsters?|crustaceans?|molluscs?|mollusks?|clams?|mussels?|oysters?|scallops?|squid|octopus)\b/, SHELLFISH],
+  [/\bfish\b/, FISH],
+  [/\bsesame\b/, SESAME],
+  [/\b(dairy|milk|lactose|cheese)\b/, DAIRY],
+  [/\beggs?\b/, EGG],
+  [/\b(gluten|wheat|celiac|coeliac)\b/, GLUTEN],
+  [/\bsoya?\b/, SOY],
 ];
+
+/** Words to look for for one allergy, always including the allergy's own words. */
+function allergenWords(allergy: string): string[] {
+  const a = normalizeText(allergy);
+  const own = a.replace(/\b(allergy|allergic|intolerance|intolerant|to)\b/g, " ").trim();
+  const mapped = ALLERGEN_WORDS.filter(([re]) => re.test(a)).flatMap(([, ws]) => ws);
+  return [...new Set([...mapped, ...(own ? [own] : [])])];
+}
 
 function normalizeText(s: string): string {
   return s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
@@ -168,9 +177,12 @@ function normalizeText(s: string): string {
 
 const NEGATORS = new Set(["no", "not", "without", "zero", "avoid", "avoids", "skip", "skips", "minus", "except", "excluding"]);
 
+/** Words, plus punctuation as its own tokens (so "wine, free entry" isn't "wine free"). */
 function tokenize(s: string): string[] {
-  return normalizeText(s).split(/[^\p{L}\p{N}']+/u).filter(Boolean);
+  return normalizeText(s).match(/[\p{L}\p{N}']+|[^\s\p{L}\p{N}']/gu) ?? [];
 }
+
+const isWord = (t: string | undefined) => t !== undefined && /^[\p{L}\p{N}']+$/u.test(t);
 
 /**
  * The listed words that `text` mentions as whole words (accent-insensitive),
@@ -185,22 +197,25 @@ function mentions(text: string, words: string[]): string[] {
   const found = new Map<string, string>();
   for (const w of words) {
     if (found.has(normalizeText(w))) continue;
-    const wt = tokenize(w);
+    const wt = tokenize(w).filter(isWord);
     if (wt.length === 0) continue;
     for (let i = 0; i + wt.length <= toks.length; i++) {
       if (!wt.every((x, j) => toks[i + j] === x)) continue;
       // Only direct negation counts: "no pork", "without any nuts", "instead
       // of shrimp", "free of gluten", "pork-free", "hold the cheese". Not
-      // "no visit is complete without a bifana" -- that recommends it.
+      // "no visit is complete without a bifana" -- that recommends it, nor
+      // "port wine, free entry" -- punctuation breaks the link.
       const p1 = toks[i - 1];
       const p2 = toks[i - 2];
-      const after = toks[i + wt.length];
+      const a1 = toks[i + wt.length];
+      const a2 = toks[i + wt.length + 1];
       const negated =
         (p1 !== undefined && NEGATORS.has(p1)) ||
         ((p1 === "any" || p1 === "added") && p2 !== undefined && NEGATORS.has(p2)) ||
         (p1 === "of" && (p2 === "instead" || p2 === "free")) ||
         (p1 === "the" && p2 === "hold") ||
-        after === "free";
+        a1 === "free" ||
+        (a1 === "-" && a2 === "free");
       if (!negated) {
         found.set(normalizeText(w), w);
         break;
@@ -210,16 +225,24 @@ function mentions(text: string, words: string[]): string[] {
   return [...found.values()];
 }
 
+// What a "check" clause checks: contents, not a menu item to order.
+const CHECK_TOPIC =
+  /\b(content|contents|contains?|handling|handled|ingredients?|prepar\w*|made|uses?|used|added|traces?|cross|certifi\w*|allergens?|has|have|free|safe)\b/;
+
 /**
- * Removes "ask/check/confirm ... about/whether/if ..." clauses: the agent's
- * advice to verify ("asking each stall about pork/alcohol content") is not a
- * recommendation of pork. Only up to the end of the clause, and only with
- * about/whether/if -- "ask for the bifana" still recommends the bifana.
+ * Removes the object of "ask/check/confirm ... about/whether/if ..." when it is
+ * about contents ("asking each stall about pork/alcohol content", "confirm
+ * whether the sauce has peanuts"): advice to verify isn't a recommendation.
+ * Only the part after about/whether/if, only to the end of that clause (a
+ * comma, "then", "but" or "and order" end it), and only when it names what's
+ * checked -- "check out the bifana if you're hungry", "ask about the wine
+ * pairing" and "...open, then order the bifana" are still read.
  */
 function stripChecks(text: string): string {
   return text.replace(
-    /\b(ask|asking|asks|check|checking|checks|confirm|confirming|enquire|inquire|verify)\b(?:\s+[^\s.;!?]+){0,3}?\s+(about|whether|if)\b[^.;!?]*/giu,
-    " ",
+    /\b(ask|asking|asks|check|checking|checks|confirm|confirming|enquire|inquire|verify)\b((?:\s+[^\s.,;!?]+){0,3}?\s+)(about|whether|if)\b([^.,;!?]*?)(?=[.,;!?]|\s+(?:then|but|and\s+order)\b|$)/giu,
+    (whole, verb: string, middle: string, kw: string, clause: string) =>
+      CHECK_TOPIC.test(normalizeText(clause)) ? `${verb}${middle}${kw} ` : whole,
   );
 }
 
@@ -261,10 +284,7 @@ export function dietConflicts(text: string, d: Dietary | undefined | null): Diet
   if (req.has("dairy_free")) add("Dairy-free", mentions(text, DAIRY));
 
   for (const allergy of d.allergies) {
-    const a = normalizeText(allergy);
-    const words = ALLERGEN_WORDS.filter(([re]) => re.test(a)).flatMap(([, ws]) => ws);
-    // Unknown allergen: look for the word itself ("kiwi").
-    add(`Allergy: ${allergy}`, mentions(text, words.length ? words : [allergy]));
+    add(`Allergy: ${allergy}`, mentions(text, allergenWords(allergy)));
   }
 
   // One entry per need, words merged.

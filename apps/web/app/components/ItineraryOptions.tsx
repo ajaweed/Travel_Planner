@@ -102,7 +102,6 @@ const PACE_LABELS: Record<string, string> = {
   packed: "Packed",
 };
 
-/** Named HOTEL/TOUR candidates, which are the only items a rating applies to. */
 /** Meals in an option, and which stops/dishes may conflict with the traveller's needs. */
 function foodSummary(option: ItineraryOption) {
   const activities = option.draft.days.flatMap((d) => d.activities);
@@ -117,6 +116,7 @@ function foodSummary(option: ItineraryOption) {
   return { meals: meals.length, restaurants, foods, flagged };
 }
 
+/** Named HOTEL/TOUR candidates, which are the only items a rating applies to. */
 function namedPlaces(days: OptionDay[]): Bookable[] {
   const out: Bookable[] = [];
   for (const day of days) {
@@ -238,6 +238,7 @@ export function ItineraryOptions({
   const cheapest = Math.min(...options.map((o) => o.estimatedTotalCents));
   const lookup = options[0]?.draft.reviewLookup;
   const single = options.length === 1;
+  const summaries = options.map(foodSummary);
 
   return (
     <section className="mt-12" aria-labelledby="options-heading">
@@ -278,7 +279,7 @@ export function ItineraryOptions({
           const isCheapest = delta === 0 && !single;
           const isChoosing = choosingId === option.id;
           const locked = choosingId !== null && !isChoosing;
-          const food = foodSummary(option);
+          const food = summaries[i]!;
           const hotelExcerpt = places
             .find((p) => p.kind === "HOTEL" && p.review?.excerpts?.length)
             ?.review?.excerpts?.[0];
@@ -400,8 +401,8 @@ export function ItineraryOptions({
                           May not suit your diet:
                         </p>
                         <ul className="mt-0.5 list-disc space-y-0.5 pl-9">
-                          {food.flagged.slice(0, 3).map((f) => (
-                            <li key={f.name}>
+                          {food.flagged.slice(0, 3).map((f, k) => (
+                            <li key={`${f.name}-${k}`}>
                               {f.name} ({f.conflicts.map((c) => `${c.need}: ${c.words.join(", ")}`).join("; ")})
                             </li>
                           ))}
@@ -464,7 +465,7 @@ export function ItineraryOptions({
               : "Estimated costs, for comparison. Real prices are on the booking sites we link you to."}
           </p>
           {lookup && <ReviewNote lookup={lookup} />}
-          {options.some((o) => foodSummary(o).meals > 0) && <DietaryCaveat labels={dietary} />}
+          {summaries.some((f) => f.meals > 0) && <DietaryCaveat labels={dietary} />}
         </div>
       </div>
     </section>
