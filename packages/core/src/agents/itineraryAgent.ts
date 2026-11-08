@@ -12,6 +12,7 @@
 import type { Tool } from "@anthropic-ai/sdk/resources/messages";
 import { AGENT_MODEL, getClaudeClient } from "../claudeClient";
 import { coerceStringifiedFields } from "./toolInputRepair";
+import { todayISO } from "./tripDates";
 import { ItineraryOptionDraftSchema, type ItineraryOptionDraft, type TripBrief } from "./types";
 
 /**

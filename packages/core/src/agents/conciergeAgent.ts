@@ -6,6 +6,7 @@
 import type { Tool } from "@anthropic-ai/sdk/resources/messages";
 import { AGENT_MODEL, getClaudeClient } from "../claudeClient";
 import { coerceStringifiedFields } from "./toolInputRepair";
+import { rollBriefForward, todayISO } from "./tripDates";
 import { ConciergeResultSchema, type ConciergeResult, type TripBrief } from "./types";
 
 const ARRAY_FIELDS = ["destinations", "interests", "mustInclude", "mustAvoid"];
@@ -54,7 +55,7 @@ const tools: Tool[] = [
   },
 ];
 
-const SYSTEM_PROMPT = `You are the concierge for a trip-planning app. Users range from
+const BASE_SYSTEM_PROMPT = `You are the concierge for a trip-planning app. Users range from
 "book me LIS->OPO on March 3rd, budget $1500" to "I don't know, surprise me, I just want
 to relax somewhere warm for a week, maybe $2000". Your job is to produce a usable
 TripBrief without being a form the user has to fill out.
@@ -80,16 +81,25 @@ Rules:
 - Budget must become an integer number of minor currency units (cents). "$1500" -> 150000.
 - Always call exactly one tool.`;
 
+function systemPrompt(today: string): string {
+  return `${BASE_SYSTEM_PROMPT}
+
+Today's date is ${today}. Every trip is in the future: when the user gives a month or date
+without a year, use its next occurrence on or after today (e.g. "March" asked in November
+means March of next year). startDate must never be before ${today}.`;
+}
+
 export async function runConciergeAgent(
   userPrompt: string,
   conversationSoFar: Array<{ role: "user" | "assistant"; content: string }> = [],
 ): Promise<ConciergeResult> {
   const client = getClaudeClient();
+  const today = todayISO();
 
   const res = await client.messages.create({
     model: AGENT_MODEL,
     max_tokens: 1024,
-    system: SYSTEM_PROMPT,
+    system: systemPrompt(today),
     tools,
     tool_choice: { type: "any" },
     messages: [
@@ -123,7 +133,12 @@ export async function runConciergeAgent(
     // coercing further.
     throw new Error(`ConciergeAgent produced an invalid brief: ${parsed.error.message}`);
   }
-  return parsed.data;
+  // Belt and braces: the prompt asks for future dates, but a past startDate
+  // would poison every downstream search, so enforce it deterministically.
+  const result = parsed.data;
+  return result.status === "complete"
+    ? { ...result, brief: rollBriefForward(result.brief, today) }
+    : { ...result, partialBrief: rollBriefForward(result.partialBrief, today) };
 }
 
 export type { TripBrief };
