@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  AlertTriangle,
   BedDouble,
   Bot,
   CalendarDays,
@@ -17,9 +18,11 @@ import {
   ShieldCheck,
   Star,
   Ticket,
+  UtensilsCrossed,
   type LucideIcon,
 } from "lucide-react";
 import type { BookingMode } from "@trip-planner/db";
+import { DietaryBadges, DietaryCaveat, type DietConflict, type Dining, type LocalFood } from "./Food";
 import { ResearchLinks } from "./ResearchLinks";
 import { Alert, buttonClasses, fmtMoney } from "./ui";
 
@@ -59,7 +62,7 @@ type OptionDay = {
   dayIndex: number;
   date?: string;
   summary?: string;
-  activities: Array<{ title: string; bookable?: Bookable }>;
+  activities: Array<{ title: string; bookable?: Bookable; dining?: Dining; conflicts?: DietConflict[] }>;
 };
 
 type ReviewLookup =
@@ -77,7 +80,7 @@ export type ItineraryOption = {
   pace: string;
   estimatedTotalCents: number;
   currency: string;
-  draft: { days: OptionDay[]; reviewLookup: ReviewLookup; variant?: string };
+  draft: { days: OptionDay[]; reviewLookup: ReviewLookup; variant?: string; localFoods?: LocalFood[] };
 };
 
 type Tier = { eyebrow: string; Icon: LucideIcon; strip: string; top: string };
@@ -98,6 +101,20 @@ const PACE_LABELS: Record<string, string> = {
   balanced: "Balanced",
   packed: "Packed",
 };
+
+/** Meals in an option, and which stops/dishes may conflict with the traveller's needs. */
+function foodSummary(option: ItineraryOption) {
+  const activities = option.draft.days.flatMap((d) => d.activities);
+  const meals = activities.flatMap((a) => (a.dining ? [a.dining] : []));
+  const restaurants = [...new Set(meals.flatMap((m) => (m.restaurantName ? [m.restaurantName] : [])))];
+  const foods = option.draft.localFoods ?? [];
+  // Named, so the traveller can judge before choosing -- not just a count.
+  const flagged = [
+    ...activities.flatMap((a) => (a.conflicts?.length ? [{ name: a.title, conflicts: a.conflicts }] : [])),
+    ...foods.flatMap((f) => (f.conflicts?.length ? [{ name: f.name, conflicts: f.conflicts }] : [])),
+  ];
+  return { meals: meals.length, restaurants, foods, flagged };
+}
 
 /** Named HOTEL/TOUR candidates, which are the only items a rating applies to. */
 function namedPlaces(days: OptionDay[]): Bookable[] {
@@ -202,6 +219,7 @@ export function ItineraryOptions({
   errorTone = "danger",
   bookingMode = "SELF",
   modePicker,
+  dietary,
 }: {
   options: ItineraryOption[];
   onChoose: (optionId: string) => void;
@@ -213,11 +231,14 @@ export function ItineraryOptions({
   bookingMode?: BookingMode;
   /** The booking-mode fieldset, rendered between the header and the cards. */
   modePicker?: React.ReactNode;
+  /** Labels of the traveller's dietary needs ("Halal", "Allergy: peanuts"). */
+  dietary?: string[];
 }) {
   const aiBooks = bookingMode === "AI";
   const cheapest = Math.min(...options.map((o) => o.estimatedTotalCents));
   const lookup = options[0]?.draft.reviewLookup;
   const single = options.length === 1;
+  const summaries = options.map(foodSummary);
 
   return (
     <section className="mt-12" aria-labelledby="options-heading">
@@ -228,6 +249,7 @@ export function ItineraryOptions({
         <ShieldCheck size={18} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-lagoon-600" />
         Nothing is booked until you choose a plan.
       </p>
+      <DietaryBadges labels={dietary} className="mt-2" />
 
       {modePicker}
 
@@ -257,6 +279,7 @@ export function ItineraryOptions({
           const isCheapest = delta === 0 && !single;
           const isChoosing = choosingId === option.id;
           const locked = choosingId !== null && !isChoosing;
+          const food = summaries[i]!;
           const hotelExcerpt = places
             .find((p) => p.kind === "HOTEL" && p.review?.excerpts?.length)
             ?.review?.excerpts?.[0];
@@ -353,6 +376,43 @@ export function ItineraryOptions({
                   </ul>
                 )}
 
+                {(food.meals > 0 || food.foods.length > 0 || food.flagged.length > 0) && (
+                  <div className="mt-4 space-y-1.5 border-t border-sand-200 pt-4 text-sm text-ink-700">
+                    <p className="flex items-start gap-2">
+                      <UtensilsCrossed size={16} strokeWidth={1.75} aria-hidden="true" className="mt-0.5 shrink-0 text-ink-500" />
+                      <span>
+                        {food.meals} meal{food.meals === 1 ? "" : "s"} planned
+                        {food.restaurants.length > 0 &&
+                          `, incl. ${food.restaurants.slice(0, 2).join(" and ")}${
+                            food.restaurants.length > 2 ? ` +${food.restaurants.length - 2} more` : ""
+                          }`}
+                      </span>
+                    </p>
+                    {food.foods.length > 0 && (
+                      <p className="pl-6 text-xs text-ink-500">
+                        Local food to try: {food.foods.slice(0, 4).map((f) => f.name).join(", ")}
+                        {food.foods.length > 4 ? "…" : ""}
+                      </p>
+                    )}
+                    {food.flagged.length > 0 && (
+                      <div className="pl-6 text-xs text-warning-700">
+                        <p className="flex items-start gap-1.5 font-medium">
+                          <AlertTriangle size={14} strokeWidth={1.75} aria-hidden="true" className="mt-px shrink-0" />
+                          May not suit your diet:
+                        </p>
+                        <ul className="mt-0.5 list-disc space-y-0.5 pl-9">
+                          {food.flagged.slice(0, 3).map((f, k) => (
+                            <li key={`${f.name}-${k}`}>
+                              {f.name} ({f.conflicts.map((c) => `${c.need}: ${c.words.join(", ")}`).join("; ")})
+                            </li>
+                          ))}
+                          {food.flagged.length > 3 && <li>and {food.flagged.length - 3} more</li>}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {hotelExcerpt && (
                   <blockquote className="mt-4 border-l-2 border-sand-300 pl-3 text-sm italic text-ink-700">
                     “{hotelExcerpt.text}”
@@ -405,6 +465,7 @@ export function ItineraryOptions({
               : "Estimated costs, for comparison. Real prices are on the booking sites we link you to."}
           </p>
           {lookup && <ReviewNote lookup={lookup} />}
+          {summaries.some((f) => f.meals > 0) && <DietaryCaveat labels={dietary} />}
         </div>
       </div>
     </section>

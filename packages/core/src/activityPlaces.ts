@@ -52,3 +52,40 @@ export function resolveActivityPlaces(days: DayLike[], destinations: string[]): 
   }
   return out;
 }
+
+type DraftDayLike = {
+  activities: Array<{
+    title: string;
+    description?: string | null;
+    bookable?: { kind: string; candidateName?: string; searchHint?: string } | null;
+    dining?: { restaurantName?: string } | null;
+  }>;
+};
+
+/**
+ * The same city logic for a not-yet-chosen option's draft (no saved rows or
+ * stored search params yet): a day's city comes from its non-flight bookables
+ * and carries forward; an activity naming a destination wins. Returns cities
+ * as [day][activity].
+ */
+export function resolveDraftCities(days: DraftDayLike[], destinations: string[]): Array<Array<string | undefined>> {
+  let carried: string | undefined = destinations.length === 1 ? destinations[0] : undefined;
+  return days.map((day) => {
+    const dayCity =
+      day.activities
+        .filter((a) => a.bookable && a.bookable.kind !== "FLIGHT")
+        .map((a) => destinationFor(destinations, a.bookable!.candidateName, a.title, a.bookable!.searchHint))
+        .find((c): c is string => !!c) ?? carried;
+    carried = dayCity;
+    return day.activities.map(
+      (a) => destinationFor(destinations, a.dining?.restaurantName, a.title, a.description ?? undefined) ?? dayCity,
+    );
+  });
+}
+
+/** A local dish's city: the trip's only one, or the destination its text names (else unknown). */
+export function foodCity(food: { name: string; description?: string; whereToTry?: string }, destinations: string[]): string | undefined {
+  return destinations.length <= 1
+    ? destinations[0]
+    : destinationFor(destinations, food.name, food.description, food.whereToTry);
+}

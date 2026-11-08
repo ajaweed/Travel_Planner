@@ -1,5 +1,6 @@
 import type { PlaceReviewSummary } from "@trip-planner/integrations";
 import { z } from "zod";
+import { DietarySchema, NO_DIETARY } from "../dietary";
 
 // --- TripBrief: what the ConciergeAgent extracts from free text ---
 
@@ -18,6 +19,24 @@ export const TripBriefSchema = z.object({
   interests: z.array(z.string()).default([]), // "food", "hiking", "museums", ...
   mustInclude: z.array(z.string()).default([]),
   mustAvoid: z.array(z.string()).default([]),
+  /**
+   * Diets, religious food rules and allergies. Every food suggestion must
+   * respect these. Merged deterministically with what the traveller ticked on
+   * the landing page, so a tick can never be lost in extraction.
+   */
+  dietary: z
+    .preprocess(
+      // A model that answers "halal" (or ["halal", "vegan"]) instead of the
+      // object still means it: keep it as requirements, and verbatim in notes.
+      (v) =>
+        typeof v === "string"
+          ? { requirements: [v], notes: v }
+          : Array.isArray(v)
+            ? { requirements: v.filter((x) => typeof x === "string"), notes: v.join(", ") }
+            : v,
+      DietarySchema.default(NO_DIETARY),
+    )
+    .catch(NO_DIETARY),
   needsFlights: z.boolean().default(true),
   needsHotel: z.boolean().default(true),
   openToRecommendations: z
@@ -57,12 +76,43 @@ export const BookableDraftSchema = z.object({
 });
 export type BookableDraft = z.infer<typeof BookableDraftSchema>;
 
+/**
+ * An optional text field the model sometimes fills with a placeholder
+ * ("None", "N/A", "-") instead of leaving it out. Those become absent, so a
+ * card never shows a restaurant called "None". Over-long text is truncated,
+ * never rejected: a wordy dietary note must not cost the meal it belongs to.
+ */
+const optionalText = (max: number) =>
+  z.preprocess((v) => {
+    if (typeof v !== "string") return v;
+    const t = v.trim();
+    return t === "" || /^(none|null|n\/?a|unknown|tbd|-+|—)$/i.test(t) ? undefined : t.slice(0, max);
+  }, z.string().optional()).catch(undefined);
+
+/**
+ * A meal stop. Display-only (there's no reservation provider), so parsing is
+ * lenient: a malformed dining block is dropped, never the whole itinerary.
+ */
+export const DiningDraftSchema = z.object({
+  meal: z.enum(["breakfast", "lunch", "dinner", "snack", "drinks"]).catch("lunch"),
+  /** A specific real, currently-operating place -- only when the model is confident it exists. */
+  restaurantName: optionalText(120),
+  cuisine: optionalText(80),
+  /** The local dish to order there. */
+  mustTry: optionalText(160),
+  /** How it fits the traveller's dietary needs, and what to confirm. */
+  dietaryNote: optionalText(400),
+  priceLevel: z.enum(["$", "$$", "$$$", "$$$$"]).optional().catch(undefined),
+});
+export type DiningDraft = z.infer<typeof DiningDraftSchema>;
+
 export const ActivityDraftSchema = z.object({
   title: z.string(),
   description: z.string().optional(),
   startTime: z.string().optional(),
   endTime: z.string().optional(),
   bookable: BookableDraftSchema.optional(),
+  dining: DiningDraftSchema.optional().catch(undefined),
 });
 export type ActivityDraft = z.infer<typeof ActivityDraftSchema>;
 
@@ -74,8 +124,28 @@ export const ItineraryDayDraftSchema = z.object({
 });
 export type ItineraryDayDraft = z.infer<typeof ItineraryDayDraftSchema>;
 
+/** A local dish or drink worth trying, for the trip's "Local food to try" list. */
+export const LocalFoodSchema = z.object({
+  name: z.preprocess((v) => (typeof v === "string" ? v.trim().slice(0, 80) : v), z.string().min(1)),
+  description: optionalText(300),
+  /** e.g. "Usually made with pork; ask for the chicken version." */
+  dietaryNote: optionalText(400),
+  /** Where to try it, if the model can name a real place. */
+  whereToTry: optionalText(120),
+});
+export type LocalFood = z.infer<typeof LocalFoodSchema>;
+
 export const ItineraryDraftSchema = z.object({
   days: z.array(ItineraryDayDraftSchema),
+  /** Dropped (not fatal) if malformed; individual bad entries are skipped. */
+  localFoods: z
+    .array(z.unknown())
+    .default([])
+    .catch([])
+    .transform((xs) => xs.flatMap((x) => {
+      const r = LocalFoodSchema.safeParse(x);
+      return r.success ? [r.data] : [];
+    }).slice(0, 12)),
 });
 export type ItineraryDraft = z.infer<typeof ItineraryDraftSchema>;
 
@@ -88,7 +158,9 @@ export type ItineraryDraft = z.infer<typeof ItineraryDraftSchema>;
  */
 export const ItineraryOptionDraftSchema = ItineraryDraftSchema.extend({
   label: z.string(), // short, distinctive name for this option
-  summary: z.string(), // one-paragraph pitch: what makes this one different
+  // One-paragraph pitch: what makes this one different. Defaulted, not
+  // required: a model that forgets it shouldn't cost a whole itinerary.
+  summary: z.string().default(""),
   /**
    * Display-only badge. Deliberately lenient: an unexpected value (the model
    * saying "moderate") must not throw away an otherwise-valid multi-day

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@trip-planner/db";
-import { startTrip } from "@trip-planner/core";
+import { DietarySchema, startTrip } from "@trip-planner/core";
 
 // NOTE: no real auth wired up yet (out of scope for this pass -- see
 // docs/architecture.md). Every request plans a trip for a single demo user
@@ -21,9 +21,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing 'prompt' string in request body." }, { status: 400 });
   }
 
+  // Optional dietary needs ticked on the landing page. Unknown tags are
+  // dropped by the schema; anything malformed is a client bug, so say so.
+  let dietary;
+  if (body.dietary !== undefined) {
+    const parsed = DietarySchema.safeParse(body.dietary);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid 'dietary' in request body." }, { status: 400 });
+    }
+    dietary = parsed.data;
+  }
+
   try {
     const user = await getOrCreateDemoUser();
-    const result = await startTrip(user.id, body.prompt);
+    const result = await startTrip(user.id, body.prompt, dietary);
     return NextResponse.json({
       tripId: result.trip.id,
       needsClarification: result.needsClarification,

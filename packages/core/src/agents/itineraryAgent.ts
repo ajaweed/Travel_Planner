@@ -96,6 +96,28 @@ const tools: Tool[] = [
                     description: { type: "string" },
                     startTime: { type: "string" },
                     endTime: { type: "string" },
+                    dining: {
+                      type: "object",
+                      description:
+                        "Set on meal activities only (and never together with 'bookable'). Display-only: there is no reservation provider.",
+                      properties: {
+                        meal: { type: "string", enum: ["breakfast", "lunch", "dinner", "snack", "drinks"] },
+                        restaurantName: {
+                          type: "string",
+                          description:
+                            "A specific real, currently-operating restaurant/cafe/market stall you are confident exists in that city, exactly as it would be searched for. Omit if not confident -- a wrong name is worse than none (then describe the kind of place in the activity instead).",
+                        },
+                        cuisine: { type: "string", description: "e.g. 'Portuguese seafood', 'Lebanese', 'vegan Japanese'." },
+                        mustTry: { type: "string", description: "The local dish to order there." },
+                        dietaryNote: {
+                          type: "string",
+                          description:
+                            "REQUIRED when the brief has dietary needs: how this fits them and what to confirm on arrival (e.g. 'Halal-certified per the restaurant -- confirm on arrival'; 'Ask for it without the peanut sauce'). Never claim certification or allergen safety you aren't sure of.",
+                        },
+                        priceLevel: { type: "string", enum: ["$", "$$", "$$$", "$$$$"] },
+                      },
+                      required: ["meal"],
+                    },
                     bookable: {
                       type: "object",
                       description:
@@ -119,8 +141,30 @@ const tools: Tool[] = [
             required: ["dayIndex", "activities"],
           },
         },
+        localFoods: {
+          type: "array",
+          description:
+            "4-8 local dishes, snacks or drinks this destination is known for that the traveller should try, each compatible with the brief's dietary needs.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "The dish's local name, e.g. 'Pastel de nata'." },
+              description: { type: "string", description: "One sentence: what it is." },
+              dietaryNote: {
+                type: "string",
+                description:
+                  "When the brief has dietary needs: how to have it within them (e.g. 'Traditionally pork; many stalls do a chicken version'), or which allergens it typically contains.",
+              },
+              whereToTry: {
+                type: "string",
+                description: "A specific real place known for it, only if confident it exists; otherwise the kind of place (e.g. 'any pastelaria').",
+              },
+            },
+            required: ["name"],
+          },
+        },
       },
-      required: ["label", "summary", "pace", "estimatedTotalCents", "days"],
+      required: ["label", "summary", "pace", "estimatedTotalCents", "days", "localFoods"],
     },
   },
 ];
@@ -161,6 +205,31 @@ Rules:
 - Restaurant/dining reservations are NOT bookable -- there is no reservation provider wired
   up yet (see architect.md). Write them as plain narrative activities with no 'bookable'
   field at all; do not set kind: "RESERVATION".
+- Leave optional fields out when you have nothing real to put there -- never write "None",
+  "N/A" or similar.
+- FOOD IS PART OF THE TRIP. Include at least one meal activity per full day (lunch or
+  dinner), with a 'dining' block: a specific restaurant you are confident is real and
+  operating (restaurantName), the cuisine, the local dish to order (mustTry) and a price
+  level matched to your framing (value = cheap local spots and markets; elevated = one or
+  two standout restaurants). Favour places locals rate over tourist traps. Also fill
+  localFoods with 4-8 things this destination is known for.
+- DIETARY NEEDS (brief.dietary) ARE HARD CONSTRAINTS, for every meal, dish, food tour and
+  drinks stop:
+  * halal: no pork or alcohol-centred activities (no wine/port tastings, bar crawls);
+    prefer restaurants known to be halal-certified; where you can't name one, suggest
+    seafood/vegetarian options and say so in dietaryNote.
+  * kosher: no pork, no shellfish, no meat-with-dairy dishes; prefer certified kosher
+    restaurants where they exist; otherwise vegetarian/fish options, noted as not
+    certified.
+  * vegetarian/vegan/pescatarian/gluten_free/dairy_free/no_pork/no_alcohol: as named.
+  * allergies: never recommend a dish built around the allergen, flag ones that commonly
+    contain it, and never state that anything is safe -- always tell them to confirm with
+    staff.
+  * notes: follow them too.
+  A dish that normally breaks a rule may be listed only with a compliant variant spelled out
+  in dietaryNote ("ask for the chicken version"). Never list anything the traveller can't
+  have at all (no "skip this one" entries) -- pick something else instead. Never claim certification or allergen
+  safety you are not sure of: say "check certification on arrival" instead.
 - Every ItineraryDay's 'date' field must be a real YYYY-MM-DD computed from brief.startDate +
   dayIndex. If brief.startDate is missing/not a real date, leave 'date' unset entirely --
   never put a placeholder like "Day 1" in a date field.
@@ -169,18 +238,39 @@ Rules:
   estimatedTotalCents is a rough comparison figure, not a quote.
 - Always call record_itinerary_option exactly once with the full plan.`;
 
+// A structurally broken tool call (seen live: a dish's fields spilling to the
+// top level, `days` lost) is usually a one-off. One retry is far cheaper for
+// the traveller than losing a whole option.
+const MAX_ATTEMPTS = 2;
+
 export async function runItineraryAgent(
   brief: TripBrief,
   variant: ItineraryVariant,
 ): Promise<ItineraryOptionDraft> {
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await attemptItinerary(brief, variant);
+    } catch (err) {
+      if (!(err instanceof InvalidItineraryError)) throw err; // API/network errors: no blind retry
+      lastError = err;
+      console.warn(`ItineraryAgent: invalid output for variant "${variant.key}" (attempt ${attempt}/${MAX_ATTEMPTS})`);
+    }
+  }
+  throw lastError!;
+}
+
+class InvalidItineraryError extends Error {}
+
+async function attemptItinerary(brief: TripBrief, variant: ItineraryVariant): Promise<ItineraryOptionDraft> {
   const client = getClaudeClient();
 
   const res = await client.messages.create({
     model: AGENT_MODEL,
-    // Generous on purpose: a full multi-day plan with per-item search hints
-    // and candidate names is a lot of tool-call JSON, and hitting the cap
-    // truncates it mid-structure (which is how the malformed-input path in
-    // toolInputRepair.ts gets exercised for real).
+    // Generous on purpose: a full multi-day plan with per-item search hints,
+    // candidate names and meals is a lot of tool-call JSON, and hitting the
+    // cap truncates it mid-structure (which is how the malformed-input path
+    // in toolInputRepair.ts gets exercised for real).
     max_tokens: 16000,
     system: SYSTEM_PROMPT,
     tools,
@@ -193,9 +283,13 @@ export async function runItineraryAgent(
     ],
   });
 
+  // Truncation isn't a one-off: an identical retry would hit the same cap,
+  // doubling cost and latency for nothing. Fail this variant straight away.
+  const ErrorType = res.stop_reason === "max_tokens" ? Error : InvalidItineraryError;
+
   const toolUse = res.content.find((b) => b.type === "tool_use");
   if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error(
+    throw new ErrorType(
       `ItineraryAgent did not produce a tool call for variant "${variant.key}" (stop_reason: ${res.stop_reason}).`,
     );
   }
@@ -203,20 +297,20 @@ export async function runItineraryAgent(
   const rawInput = toolUse.input as Record<string, unknown>;
   let parsed = ItineraryOptionDraftSchema.safeParse(rawInput);
   if (!parsed.success) {
-    // Only `days` goes through the repair path, on purpose. It's the one
-    // structurally-complex field, and it's the one Claude was observed
+    // Only the structured fields (`days`, `localFoods`) go through the repair
+    // path, on purpose: `days` is the one Claude was observed
     // double-encoding. The scalar metadata fields are handled by the schema
     // instead (z.coerce on the number, .catch() on the enum) -- running them
     // through JSON.parse would turn a legitimately numeric-looking label like
     // "2024" into a number and fail validation that would otherwise pass.
-    parsed = ItineraryOptionDraftSchema.safeParse(coerceStringifiedFields(rawInput, ["days"]));
+    parsed = ItineraryOptionDraftSchema.safeParse(coerceStringifiedFields(rawInput, ["days", "localFoods"]));
   }
   if (!parsed.success) {
     console.error(
-      `ItineraryAgent raw tool_use.input (variant ${variant.key}):`,
+      `ItineraryAgent raw tool_use.input (variant ${variant.key}, stop_reason ${res.stop_reason}):`,
       JSON.stringify(rawInput),
     );
-    throw new Error(
+    throw new ErrorType(
       `ItineraryAgent produced an invalid itinerary for variant "${variant.key}": ${parsed.error.message}`,
     );
   }

@@ -891,6 +891,26 @@ Give each row `id="activity-{id}"` so notifications can link to it.
   that every rendered link URL comes from the deterministic builder, never from model
   text.
 
+### 4.10 Food and dietary needs (added 2026-11-08)
+- **Landing:** "Dietary needs or allergies?" opens a panel (collapsed by default, with a count
+  badge) under the prompt: checkbox chips for Halal, Kosher, Vegetarian, Vegan, Gluten-free,
+  Dairy-free, No pork and No alcohol, plus a comma-separated allergies field. These are
+  merged into the brief in code (`mergeDietary`), never left to the model to extract.
+- **"Planned around: Halal · Allergy: peanuts"** badges (`DietaryBadges`) under the trip
+  title, above the options, and on the local-food section.
+- **Options cards:** "N meals planned, incl. <restaurants>", the first local dishes, and a
+  named list of anything flagged ("May not suit your diet: <stop> (Halal: wine)"), so the
+  traveller can judge before choosing.
+- **Trip page:** a "Local food to try" card grid (dish, what it is, dietary note, where,
+  Google Maps). Meal stops show the restaurant, meal · cuisine · price, "Try: <dish>", the
+  agent's dietary note and a Maps link. Every stop can carry a conflict warning.
+- **Honesty rules:** food suggestions are AI-generated, and named places can be wrong or
+  closed, so a standing caveat appears wherever food is suggested. With dietary needs, it
+  adds "confirm halal/kosher certification, ingredients and allergens with the restaurant".
+  The keyword conflict check (`core/src/dietary.ts`) errs towards flagging and is never
+  hidden. It ignores direct negations ("pork-free", "without nuts") and advice to check
+  ("ask about pork content"), but not idioms that recommend ("…without a bifana").
+
 ## 7. Out of scope for this pass
 - Dark mode. Tokens are named by role so a dark set can be added later.
 - Payment-method collection and checkout for **live** AI booking. That needs its own

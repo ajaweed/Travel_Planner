@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { ContourPattern } from "./components/ContourPattern";
 import { DestinationIdeas } from "./components/DestinationIdeas";
+import { DietaryPicker, NO_DIETARY_CHOICE, parseAllergies, type DietaryChoice } from "./components/DietaryPicker";
 import { Alert, CHIP_CLASSES, buttonClasses } from "./components/ui";
 
 // "Surprise me" first on purpose: it's the "I don't know what I want" path.
@@ -50,6 +51,8 @@ export default function HomePage() {
   const [prompt, setPrompt] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dietary, setDietary] = useState<DietaryChoice>(NO_DIETARY_CHOICE);
+  const [allergiesText, setAllergiesText] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -60,7 +63,10 @@ export default function HomePage() {
       const res = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          prompt,
+          dietary: { requirements: dietary.requirements, allergies: parseAllergies(allergiesText) },
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -127,6 +133,13 @@ export default function HomePage() {
               }
               rows={4}
               className="w-full resize-none border-0 bg-transparent p-4 text-lg text-ink-900 placeholder:text-ink-500 focus:outline-none focus:ring-0"
+            />
+            <DietaryPicker
+              value={dietary}
+              allergiesText={allergiesText}
+              onChange={setDietary}
+              onAllergiesTextChange={setAllergiesText}
+              disabled={submitting}
             />
             <div className="flex flex-col gap-3 border-t border-sand-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="flex items-center gap-1.5 text-sm text-ink-500">

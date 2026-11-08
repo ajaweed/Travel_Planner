@@ -9,7 +9,8 @@ import { coerceStringifiedFields } from "./toolInputRepair";
 import { rollBriefForward, todayISO } from "./tripDates";
 import { ConciergeResultSchema, type ConciergeResult, type TripBrief } from "./types";
 
-const ARRAY_FIELDS = ["destinations", "interests", "mustInclude", "mustAvoid"];
+// Fields Claude has been seen to double-encode as JSON strings (repaired before validation).
+const ARRAY_FIELDS = ["destinations", "interests", "mustInclude", "mustAvoid", "dietary"];
 
 const tools: Tool[] = [
   {
@@ -33,6 +34,26 @@ const tools: Tool[] = [
         interests: { type: "array", items: { type: "string" } },
         mustInclude: { type: "array", items: { type: "string" } },
         mustAvoid: { type: "array", items: { type: "string" } },
+        dietary: {
+          type: "object",
+          description:
+            "Food needs the traveller states for anyone in the party. Empty when none are mentioned -- never guess (do not infer halal/kosher from a name or destination).",
+          properties: {
+            requirements: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: ["halal", "kosher", "vegetarian", "vegan", "pescatarian", "gluten_free", "dairy_free", "no_pork", "no_alcohol"],
+              },
+            },
+            allergies: {
+              type: "array",
+              items: { type: "string" },
+              description: "Allergens in plain words, e.g. \"peanuts\", \"tree nuts\", \"shellfish\", \"sesame\".",
+            },
+            notes: { type: "string", description: "Any other food need in the traveller's words (e.g. 'no spicy food')." },
+          },
+        },
         needsFlights: { type: "boolean" },
         needsHotel: { type: "boolean" },
         openToRecommendations: { type: "boolean" },
@@ -79,6 +100,9 @@ Rules:
   planning: no usable destination at all, no usable budget, no usable date/duration window,
   or (when needsFlights) no origin city. Everything else gets a reasonable default.
 - Budget must become an integer number of minor currency units (cents). "$1500" -> 150000.
+- Record dietary needs exactly as stated (halal, kosher, vegetarian, allergies...). Never
+  ask about them and never infer them from anything else; a missing dietary need is not a
+  reason for a clarifying question.
 - Always call exactly one tool.`;
 
 function systemPrompt(today: string): string {

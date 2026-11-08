@@ -603,3 +603,59 @@ Tests: 162 core + 13 (fake Wikimedia fixture; limiter, batching, matching, cache
 Typecheck and build pass. Screenshots: landing, Dubai itinerary with stop thumbnails, and a
 temporary 5-city trip (inserted and then deleted from dev.db). Merged to `main` and pushed.
 Reviewed by `/code-review`.
+
+**2026-11-08 -- backend-dev** -- START `backend-dev/food-and-dietary`: product owner asked
+for restaurant and local-food recommendations that respect dietary restrictions (halal,
+kosher, allergies, etc.). Plan: `dietary` on the TripBrief (from the prompt plus optional
+landing-page choices, merged deterministically); the itinerary agent plans meals (dining
+activities) and a "Local food to try" list per option; a deterministic conflict check flags
+anything that mentions pork/shellfish/alcohol/listed allergens. Everything is labelled as
+AI-suggested, to be confirmed with the restaurant. No migration: the chosen option's
+draftJson already carries the food data.
+
+**2026-11-08 -- backend-dev** -- FINISH `backend-dev/food-and-dietary`. Trips now include
+restaurant and local-food recommendations that respect dietary needs.
+- `TripBrief.dietary` (tags: halal, kosher, vegetarian, vegan, pescatarian, gluten-free,
+  dairy-free, no pork, no alcohol; plus allergies and notes) comes from the prompt plus a
+  new collapsible landing-page picker. They are merged in code and carried through
+  clarification.
+- The itinerary agent plans meal stops (`dining`: restaurant, cuisine, dish, dietary note,
+  price) and 4-8 `localFoods`, with dietary needs as hard constraints. It retries once on
+  malformed output (seen live: one option lost `days`, two lost `summary`, which is now
+  defaulted), but not after max_tokens truncation.
+- Deterministic safety net (`core/src/dietary.ts`): every stop and dish is keyword-checked
+  against the needs (pork/shellfish/alcohol/meat/allergen word lists, incl. local names
+  like chouriço, bifana, ginjinha). It ignores direct negations and "ask/check about
+  <contents>" advice, and errs towards flagging.
+- UI: "Planned around" badges; option cards list meals, local dishes and each flagged item
+  by name; the trip page has "Local food to try" cards and meal details on stops, with Maps
+  links. A standing caveat (AI-suggested; confirm certification/allergens) appears
+  wherever food is shown.
+- No migration: food is read from the SELECTED option's draftJson, matched to saved rows by
+  (dayIndex, order) plus a title check.
+- Live run (Lisbon, halal + peanut allergy): halal-certified Indian, grilled fish and
+  seafood picks, allergy notes at every stop. The safety net caught real slips: a "Food &
+  Wine Tasting" tour, caldo verde (chouriço), ginjinha (liqueur) and clams in wine. Also
+  found and fixed: restaurant names of "None", and "skip this" dishes in the list.
+`/code-review` (medium) raised 10 findings; all fixed:
+- "ask/check ... if/about" stripping hid real recommendations: it now strips only the
+  checked clause, only when it is about contents, and stops at a comma or "then".
+- Allergen lookup is whole-word (coconut, nutmeg and eggplant no longer read as nut/egg) and
+  always includes the allergen itself.
+- "free" after punctuation is no longer read as negation (punctuation is now tokenized).
+- One bad dietary field no longer wipes all needs: field-by-field lenient, notes truncated,
+  "vegan and gluten-free" yields both tags.
+- Long dietary notes no longer drop the whole meal/dish: text is truncated, not rejected.
+- Multi-city: meal/dish links use the stop's city (`resolveDraftCities`, `foodCity`), not
+  the first destination.
+- No retry after max_tokens truncation.
+- Unique React keys for flagged items and food cards.
+- Reuse: `googleMapsSearch` (bookingLinks) and `withDestination` (researchLinks); Food.tsx
+  uses core's types.
+- Also: selected-option read runs in parallel with budget/unread; foodSummary computed once;
+  stale comments fixed; diet tags split into a dependency-free module (landing JS back to
+  8.7 kB from 22 kB).
+Tests: 224 core + 13; typecheck and build pass. Screenshots of the options view and the
+chosen trip page. Test trips created in dev.db: cmw8dfl4p... (failed run, before the retry
+fix) and cmw8di1cu... (Lisbon halal + peanut). Merged to `main` and pushed. Reviewed by
+`/code-review`.
