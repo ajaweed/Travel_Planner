@@ -43,6 +43,7 @@ function draftWith(
     summary: "A summary.",
     pace: "balanced",
     estimatedTotalCents: 150000,
+    localFoods: [],
     days: [
       {
         dayIndex: 0,

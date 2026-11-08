@@ -25,6 +25,7 @@ import { Notifications } from "../../components/Notifications";
 import { StatusPill } from "../../components/StatusPill";
 import { TripPhotoBanner } from "../../components/TripPhotoBanner";
 import type { Photo } from "../../components/DestinationPhoto";
+import { DietaryBadges, LocalFoodSection } from "../../components/Food";
 import { Alert, buttonClasses, CARD_CLASSES, INPUT_CLASSES } from "../../components/ui";
 
 type TripData = any; // the API route returns Prisma's shape directly; tighten with a shared type once it stabilizes.
@@ -35,6 +36,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const [answer, setAnswer] = useState("");
   const [answering, setAnswering] = useState(false);
   const [options, setOptions] = useState<ItineraryOption[] | null>(null);
+  const [optionsDietary, setOptionsDietary] = useState<string[]>([]);
   const [choosingId, setChoosingId] = useState<string | null>(null);
   const [chooseError, setChooseError] = useState<string | null>(null);
   // "info" for the AI-mode "still working" message, which isn't a failure.
@@ -118,6 +120,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
         const json = await res.json();
         if (!cancelled) {
           setOptions(json.options ?? []);
+          setOptionsDietary(Array.isArray(json.dietary) ? json.dietary : []);
           setOptionsError(null);
         }
       } catch (err) {
@@ -322,6 +325,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
               )}
             </div>
           )}
+          <DietaryBadges labels={data.food?.dietary} className="mt-3" />
           <TripPhotoBanner destinations={Array.isArray(data.destinations) ? data.destinations : []} />
         </div>
       </div>
@@ -453,6 +457,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
               disabled={choosingId !== null}
               error={chooseError}
               errorTone={chooseErrorTone}
+              dietary={optionsDietary}
               modePicker={
                 hasBookables ? (
                   <BookingModePicker
@@ -506,6 +511,10 @@ export default function TripPage({ params }: { params: { id: string } }) {
               ? `Plan locked in — the AI is booking your flights, hotel, and activities…${testSuffix}`
               : "This trip was planned before the app switched to booking links, so it has no links. Plan a new trip to get them."}
           </Alert>
+        )}
+
+        {trip.itinerary.length > 0 && (
+          <LocalFoodSection foods={data.food?.localFoods} dietary={data.food?.dietary} />
         )}
 
         {trip.itinerary.length > 0 && (

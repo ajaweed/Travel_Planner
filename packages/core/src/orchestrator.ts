@@ -17,6 +17,7 @@ import { runBookingAgent, type BookableItem, type BookingOutcome } from "./agent
 import { getBudgetStatus } from "./agents/budgetAgent";
 import { notify } from "./agents/notificationAgent";
 import { attachRealReviews } from "./reviewLookup";
+import { dietaryFromBrief, mergeDietary, type Dietary } from "./dietary";
 import type {
   EnrichedItineraryDayDraft,
   StoredItineraryOption,
@@ -44,15 +45,21 @@ export class OrchestratorError extends Error {
   }
 }
 
-export async function startTrip(userId: string, rawPrompt: string) {
+/**
+ * @param dietary what the traveller ticked on the landing page. Merged into
+ *   the brief in code -- never left to the model to extract -- and carried
+ *   through a clarification round in the stored partial brief.
+ */
+export async function startTrip(userId: string, rawPrompt: string, dietary?: Partial<Dietary>) {
   const result = await runConciergeAgent(rawPrompt);
 
   if (result.status === "needs_clarification") {
+    const partialBrief = { ...result.partialBrief, dietary: mergeDietary(result.partialBrief.dietary, dietary) };
     const trip = await prisma.trip.create({
       data: {
         userId,
         rawPrompt,
-        briefJson: JSON.stringify(result.partialBrief),
+        briefJson: JSON.stringify(partialBrief),
         budgetTotalCents: result.partialBrief.budgetTotalCents ?? 0,
         currency: result.partialBrief.currency ?? "USD",
         status: "DRAFT",
@@ -62,7 +69,8 @@ export async function startTrip(userId: string, rawPrompt: string) {
     return { trip, needsClarification: true as const, question: result.question };
   }
 
-  const trip = await createTripFromBrief(userId, rawPrompt, result.brief);
+  const brief = { ...result.brief, dietary: mergeDietary(result.brief.dietary, dietary) };
+  const trip = await createTripFromBrief(userId, rawPrompt, brief);
   await generateItineraryOptions(trip.id);
   return { trip, needsClarification: false as const };
 }
@@ -87,19 +95,25 @@ export async function answerClarification(tripId: string, userReply: string) {
     { role: "assistant", content: `Partial brief so far: ${trip.briefJson}` },
   ]);
 
+  // Dietary needs from earlier turns (incl. landing-page ticks) must survive
+  // however the model restates the brief.
+  const earlierDietary = dietaryFromBrief(trip.briefJson);
+
   if (result.status === "needs_clarification") {
+    const partialBrief = { ...result.partialBrief, dietary: mergeDietary(result.partialBrief.dietary, earlierDietary) };
     await prisma.trip.update({
       where: { id: tripId },
-      data: { briefJson: JSON.stringify(result.partialBrief) },
+      data: { briefJson: JSON.stringify(partialBrief) },
     });
     await notify({ tripId, kind: "CLARIFICATION_NEEDED", message: result.question });
     return { needsClarification: true as const, question: result.question };
   }
 
+  const brief = { ...result.brief, dietary: mergeDietary(result.brief.dietary, earlierDietary) };
   await prisma.trip.update({
     where: { id: tripId },
     data: {
-      briefJson: JSON.stringify(result.brief),
+      briefJson: JSON.stringify(brief),
       budgetTotalCents: result.brief.budgetTotalCents,
       currency: result.brief.currency,
       status: "PLANNING",

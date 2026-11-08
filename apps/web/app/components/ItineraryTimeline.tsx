@@ -9,10 +9,12 @@ import {
   MapPin,
   Plane,
   Ticket,
+  UtensilsCrossed,
   type LucideIcon,
 } from "lucide-react";
 import { BookingLinks } from "./BookingLinks";
 import { PhotoCredit, PhotoFill, type Photo } from "./DestinationPhoto";
+import { ConflictNote, DiningDetail, type DietConflict, type Dining } from "./Food";
 import { ResearchLinks } from "./ResearchLinks";
 import { StatusPill } from "./StatusPill";
 import { CARD_CLASSES, fmtMoney } from "./ui";
@@ -39,6 +41,9 @@ type Activity = {
   startTime?: string | null;
   booking?: Booking | null;
   research?: Link[];
+  dining?: Dining;
+  /** Possible conflicts with the traveller's dietary needs (keyword check). */
+  conflicts?: DietConflict[];
 };
 type Day = { id: string; dayIndex: number; date?: string | null; summary?: string | null; activities: Activity[] };
 
@@ -188,7 +193,7 @@ function ActivityRow({
   const [photoBroken, setPhotoBroken] = useState(false);
   const photo = photoBroken ? undefined : foundPhoto;
   const booking = activity.booking;
-  const Icon = (booking && KIND_ICONS[booking.kind]) || MapPin;
+  const Icon = (booking && KIND_ICONS[booking.kind]) || (activity.dining ? UtensilsCrossed : MapPin);
   const linkOut = booking?.status === "LINK_OUT";
   const awaiting = booking?.status === "AWAITING_CONFIRMATION";
   const showFallback = aiMode && booking && (booking.links?.length ?? 0) > 0;
@@ -226,6 +231,8 @@ function ActivityRow({
             {activity.title}
           </p>
           {activity.description && <p className="mt-0.5 text-sm text-ink-500">{activity.description}</p>}
+          {activity.dining && <DiningDetail dining={activity.dining} />}
+          <ConflictNote conflicts={activity.conflicts} className="mt-1.5" />
           <ResearchLinks links={activity.research} subject={activity.title} />
           {photo && <PhotoCredit photo={photo} label={photo.subject} className="mt-1" />}
           {booking && !linkOut && (

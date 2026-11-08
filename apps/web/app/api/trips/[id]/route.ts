@@ -3,10 +3,13 @@ import { prisma } from "@trip-planner/db";
 import {
   buildBookingLinks,
   buildResearchLinks,
+  dietaryFromBrief,
+  dietaryLabels,
   destinationsFromBrief,
   getAiBookingReadiness,
   getBudgetStatus,
   getUnreadNotifications,
+  planFood,
   reapStalledBookings,
   resolveActivityPlaces,
 } from "@trip-planner/core";
@@ -42,14 +45,45 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const destinations = destinationsFromBrief(trip.briefJson);
   // Each activity's city (multi-city aware) and stored search params.
   const places = resolveActivityPlaces(trip.itinerary, destinations);
+  const dietary = dietaryFromBrief(trip.briefJson);
+
+  // Meals and "local food to try" live in the chosen option's draft (no
+  // migration needed); conflicts with the traveller's needs are re-checked on
+  // every read, so a better check helps existing plans too.
+  const selected =
+    trip.itinerary.length > 0
+      ? await prisma.itineraryOption.findFirst({
+          where: { tripId: trip.id, status: "SELECTED" },
+          select: { draftJson: true },
+        })
+      : null;
+  const food = planFood(
+    trip.itinerary.map((day) => ({
+      ...day,
+      activities: day.activities.map((a) => {
+        const name = places.get(a.id)?.params.candidateName;
+        return { ...a, candidateName: typeof name === "string" ? name : undefined };
+      }),
+    })),
+    selected?.draftJson,
+    dietary,
+    (id) => places.get(id)?.city,
+    destinations[0],
+  );
 
   const itinerary = trip.itinerary.map((day) => ({
     ...day,
     activities: day.activities.map((activity) => {
       const { params, city } = places.get(activity.id) ?? { params: {} };
-      const candidateName = typeof params.candidateName === "string" ? params.candidateName : undefined;
+      const dining = food.dining.get(activity.id);
+      // A meal's named restaurant is what's worth vetting.
+      const candidateName =
+        (typeof params.candidateName === "string" ? params.candidateName : undefined) ?? dining?.restaurantName;
       return {
         ...activity,
+        dining,
+        // Possible conflicts with the traveller's dietary needs, any stop.
+        conflicts: food.conflicts.get(activity.id),
         // "See what people say" (Google / Reddit) -- deterministic URLs, never model-written.
         research: buildResearchLinks({
           title: activity.title,
@@ -84,6 +118,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     trip: { ...trip, itinerary },
     // For the header photos; [] until the brief names a place.
     destinations,
+    // What the plan was made to respect, and the local dishes to try.
+    food: { dietary: dietaryLabels(dietary), localFoods: food.localFoods },
     aiBooking: getAiBookingReadiness(),
     budget,
     unreadCount: unread.length,

@@ -603,3 +603,12 @@ Tests: 162 core + 13 (fake Wikimedia fixture; limiter, batching, matching, cache
 Typecheck and build pass. Screenshots: landing, Dubai itinerary with stop thumbnails, and a
 temporary 5-city trip (inserted and then deleted from dev.db). Merged to `main` and pushed.
 Reviewed by `/code-review`.
+
+**2026-11-08 -- backend-dev** -- START `backend-dev/food-and-dietary`: product owner asked
+for restaurant and local-food recommendations that respect dietary restrictions (halal,
+kosher, allergies, etc.). Plan: `dietary` on the TripBrief (from the prompt plus optional
+landing-page choices, merged deterministically); the itinerary agent plans meals (dining
+activities) and a "Local food to try" list per option; a deterministic conflict check flags
+anything that mentions pork/shellfish/alcohol/listed allergens. Everything is labelled as
+AI-suggested, to be confirmed with the restaurant. No migration: the chosen option's
+draftJson already carries the food data.
