@@ -2,7 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  background-color: #0b0f14;
-  color: #e7edf3;
+@layer base {
+  /* Fraunces' softer, warmer cut for display text (docs/visual-design.md §2.2). */
+  .font-display {
+    font-variation-settings: "SOFT" 50, "opsz" 72;
+  }
+
+  ::selection {
+    background: #e2f0ee;
+    color: #0a5652;
+  }
+}
+
+/* Nothing in the app relies on animation to communicate state: every
+   in-progress state also has text. So reduced motion can switch it all off. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -146,6 +146,13 @@ export type ReviewLookupStatus =
 export type StoredItineraryOption = Omit<ItineraryOptionDraft, "days"> & {
   days: EnrichedItineraryDayDraft[];
   reviewLookup: ReviewLookupStatus;
+  /**
+   * Which ITINERARY_VARIANTS framing produced this option ("value" |
+   * "balanced" | "elevated"). Stored because optionIndex is renumbered when a
+   * variant fails, so position does not identify the tier. Absent on options
+   * generated before this field existed -- the UI shows a neutral header then.
+   */
+  variant?: string;
 };
 
 // --- Budget ---
