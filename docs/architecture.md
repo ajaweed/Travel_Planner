@@ -56,7 +56,8 @@ sequenceDiagram
 
 ## Package boundaries
 
-- `apps/web` — UI + thin API routes. Only ever calls `packages/core`.
+- `apps/web` — UI + thin API routes. Only ever calls `packages/core`. Visual design
+  (tokens, typography, page-by-page treatment) is specified in `docs/visual-design.md`.
 - `packages/core` — agents + orchestrator. The only package that talks to the LLM
   (Anthropic SDK) and the only package that sequences money-moving operations.
 - `packages/integrations` — the only package that holds provider SDKs/API keys and
@@ -75,6 +76,7 @@ sequenceDiagram
 | Multiple itinerary options | 2-3 options via separate ItineraryAgent calls, one per variant framing | The user picks before anything is booked (new `CHOOSING` trip status + `ItineraryOption` rows). Separate calls rather than one call returning all variants: the single-itinerary tool schema is the shape already proven against the real model, and asking for 3x the output in one call triples the truncation surface at `max_tokens` while losing per-variant retry. `Promise.allSettled`, so one bad variant costs one option instead of the trip. |
 | Payments | Stripe | PCI scope stays off our servers via Payment Element/PaymentIntents; this codebase never touches raw card data. |
 | Messaging channel | In-app only (current scope) | Chosen explicitly over email/SMS/Slack for v1 — `packages/core/src/agents/notificationAgent.ts` is the one seam to add a channel later without touching callers. |
+| Visual direction | "Golden Hour": warm light theme (sand background, lagoon-teal actions, Fraunces + Inter), lucide-react icons, gradients/original contour pattern instead of photos | Product owner found the dark-neutral UI "bland". Warm and editorial for a travel product, with one sober action color and tabular sans money figures because it handles spend. No stock photos (no rights, and a generic beach would misrepresent the plan). Full spec, AA-verified contrast table and frontend-dev checklist in `docs/visual-design.md`. Option tier colors depend on backend persisting the variant key (not stored today). |
 | Auth | **Not yet implemented** | `/api/plan` currently runs every request against a single demo user (see the NOTE in `apps/web/app/api/plan/route.ts`). Needs real session-based auth before this is usable by more than one person or anywhere near real payments. |
 
 ## What "production" actually requires, per provider

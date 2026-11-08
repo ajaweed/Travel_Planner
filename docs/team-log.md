@@ -244,3 +244,32 @@ with verified WCAG AA contrast, next/font typography, spacing/radius/shadow, mot
 a page-by-page treatment of every existing page/component in `apps/web`, an imagery
 policy, and a prioritized checklist for `frontend-dev`. Doc only -- no app code on
 this branch, so it can't collide with the in-flight `backend-dev/current-date-context`.
+
+**2026-11-08 -- ux-designer** -- Finished `ux-designer/visual-refresh` (doc only, not
+merged). Wrote `docs/visual-design.md` ("Golden Hour" direction) and linked it from
+`docs/architecture.md` (package boundaries + decisions log). It moves the app from the
+dark-neutral theme to a warm light one: `sand-50` page, `lagoon-600` (#0E6B66) as the
+single action/trust color, `sunset-600` accent, Fraunces display + Inter body via
+next/font, money always in tabular Inter. Every text/background pair is in a measured
+contrast table (all AA). Two findings from measuring: `ink-500` on `sand-200` fails
+(4.15), so it's banned, and input borders must use `sand-400` (3.36:1) rather than the
+decorative sand borders. Imagery: lucide-react icons, a sunrise gradient and an original
+contour SVG. No photos, no social proof.
+
+**Handoffs:**
+- **frontend-dev:** implement in the P0 -> P2 order in §6 of the doc. P0 is
+  tokens/fonts/primitives/StatusPill. P1 is landing (with new example-prompt chips that
+  fill-and-focus, never auto-submit), the options cards, BudgetBar and the clarification
+  card.
+- **backend-dev (blocking for tier colors):** the option variant key
+  (`value`/`balanced`/`elevated`) isn't persisted anywhere, and `persistOptions()`
+  compacts `optionIndex` when a variant fails, so index != tier. Carry `variant` through
+  `draftJson` and return it from `listItineraryOptions`. Until then, frontend-dev ships
+  neutral card headers. It must not guess a tier from index or price.
+- **revision-flow branch:** the persistent revise dock is specified visually (§4.3).
+  It must appear in every trip status, and no non-functional placeholder ships before the
+  endpoint exists.
+- **qa-tester:** state matrix at 375/1280px, with reduce-motion on, plus a keyboard-only
+  pass.
+Kept intact: "No rating available" honesty copy (now `text-sm`, deliberately not
+styled like a low rating), all existing state copy, and the status-gating logic.
