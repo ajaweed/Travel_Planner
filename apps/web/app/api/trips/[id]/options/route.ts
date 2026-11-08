@@ -37,7 +37,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
           const activity = conflicts.length ? { ...raw, conflicts } : raw;
           // Meals: a map link for the named place.
           if (activity.dining) {
-            return { ...activity, dining: diningView(activity.dining, cities[d]?.[a]) };
+            return { ...activity, dining: diningView(activity.dining, cities[d]?.[a], option.draft.restaurantChecks) };
           }
           const b = activity.bookable;
           if (!b?.candidateName || (b.kind !== "HOTEL" && b.kind !== "TOUR")) return activity;

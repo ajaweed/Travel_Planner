@@ -904,6 +904,14 @@ Give each row `id="activity-{id}"` so notifications can link to it.
 - **Trip page:** a "Local food to try" card grid (dish, what it is, dietary note, where,
   Google Maps). Meal stops show the restaurant, meal · cuisine · price, "Try: <dish>", the
   agent's dietary note and a Maps link. Every stop can carry a conflict warning.
+- **Restaurant checks (Google Places, added 2026-11-08):** each named restaurant gets one
+  line under the meal. "✓ Open, on Google · ★ 4.5 (5,272 reviews)" (success-700, with a
+  rating only if Google has one), "Google lists X as permanently/temporarily closed. Pick
+  somewhere else nearby." (danger-700), or "We couldn't find this place on Google…"
+  (warning-700, worded as couldn't-find, never as doesn't-exist). A verified place's Maps
+  link goes to the place itself. Option cards show "N of M restaurants found on Google" and
+  name any closed ones. No line at all when no check was made (no key, provider down, over
+  the cap).
 - **Honesty rules:** food suggestions are AI-generated, and named places can be wrong or
   closed, so a standing caveat appears wherever food is suggested. With dietary needs, it
   adds "confirm halal/kosher certification, ingredients and allergens with the restaurant".

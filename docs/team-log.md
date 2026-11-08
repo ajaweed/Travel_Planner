@@ -659,3 +659,38 @@ Tests: 224 core + 13; typecheck and build pass. Screenshots of the options view 
 chosen trip page. Test trips created in dev.db: cmw8dfl4p... (failed run, before the retry
 fix) and cmw8di1cu... (Lisbon halal + peanut). Merged to `main` and pushed. Reviewed by
 `/code-review`.
+
+**2026-11-08 -- integrations-dev** -- `integrations-dev/restaurant-verification`: product owner
+added a Google Places key and asked to verify the restaurants the AI recommends.
+- `integrations/reviews.findRestaurant`: one Text Search per restaurant (name + city, location
+  bias to the city), returning up to 3 candidates with business status, rating, location and
+  Maps URL. No Details call.
+- `core/restaurantChecks.ts` decides whether a candidate IS the named place: the name must
+  match beyond generic/cuisine words (both directions; generic-only names need an exact
+  generic match) and it must be within 40 km of the city (Wikipedia coordinates; else
+  address). Results (OPEN/FOUND/CLOSED_*/NOT_FOUND, rating, Maps URL) are stored per option
+  as `restaurantChecks`, keyed by full normalised name -- never on the model's output.
+- UI: each meal shows "Open, on Google · ★ rating (n reviews)" (or closed / couldn't find)
+  and links to the exact place; option cards show "N of M checked restaurants found on
+  Google" and name closed ones; a note under the options explains unchecked names.
+- Live: Rome (vegetarian + tree-nut allergy) plan -- all 10 named restaurants verified open
+  with real ratings, e.g. "Grappolo d'Oro" = "Hosteria Grappolo d'oro". Two invented names
+  ("Trattoria Fantasma di Zzyzx", "Osteria del Gatto Volante Blu") came back as other
+  restaurants from Google and were correctly rejected. The key also brought real hotel/tour
+  ratings to the options, so long review quotes are now clamped to 4 lines.
+`/code-review` (medium) raised 10 findings; all fixed:
+- Dedupe by (name, city), not name: the same name in two cities is two checks.
+- `restaurantKey` keeps every word ("Bar 1" vs "Bar 2", "A"/"O Cevicheria", "Yu").
+- Generic-only names ("The Italian Restaurant") can't be verified by "Da Mario Italian
+  Restaurant".
+- Card counts only use checked names; closed places count as found and are also listed.
+- Concurrency limited to 4, with one retry for a short rate limit.
+- A key rejected after the probe counts as unchecked.
+- Maps URL host check is exact (google.com or *.google.com, https).
+- checkRestaurants can never fail generation (wrapped; reports UNAVAILABLE).
+- `restaurantLookup` is now shown (RestaurantNote).
+- `sameWord` shared from stopPhotos. The probe-then-batch pattern stays separate from
+  reviewLookup's: the result shapes differ.
+The Rome test trip's stored checks were re-keyed in dev.db after the key format change (test
+data on this branch only). Tests: 251 core + 16 integrations; typecheck and build pass.
+Merged to `main` and pushed. Reviewed by `/code-review`.

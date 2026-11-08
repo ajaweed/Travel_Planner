@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   AlertTriangle,
+  BadgeCheck,
   BedDouble,
   Bot,
   CalendarDays,
@@ -23,6 +24,7 @@ import {
 } from "lucide-react";
 import type { BookingMode } from "@trip-planner/db";
 import { DietaryBadges, DietaryCaveat, type DietConflict, type Dining, type LocalFood } from "./Food";
+import type { RestaurantLookupStatus } from "@trip-planner/core";
 import { ResearchLinks } from "./ResearchLinks";
 import { Alert, buttonClasses, fmtMoney } from "./ui";
 
@@ -80,7 +82,13 @@ export type ItineraryOption = {
   pace: string;
   estimatedTotalCents: number;
   currency: string;
-  draft: { days: OptionDay[]; reviewLookup: ReviewLookup; variant?: string; localFoods?: LocalFood[] };
+  draft: {
+    days: OptionDay[];
+    reviewLookup: ReviewLookup;
+    variant?: string;
+    localFoods?: LocalFood[];
+    restaurantLookup?: RestaurantLookupStatus;
+  };
 };
 
 type Tier = { eyebrow: string; Icon: LucideIcon; strip: string; top: string };
@@ -107,13 +115,23 @@ function foodSummary(option: ItineraryOption) {
   const activities = option.draft.days.flatMap((d) => d.activities);
   const meals = activities.flatMap((a) => (a.dining ? [a.dining] : []));
   const restaurants = [...new Set(meals.flatMap((m) => (m.restaurantName ? [m.restaurantName] : [])))];
+  // Google Places checks, per distinct restaurant (case-insensitive). Only
+  // names that were actually checked count: unchecked ones (over the cap, a
+  // failed lookup) are neither "found" nor "not found".
+  const checked = new Map(
+    meals.flatMap((m) => (m.restaurantName && m.check ? [[m.restaurantName.trim().toLowerCase(), { name: m.restaurantName, check: m.check }] as const] : [])),
+  );
+  const found = [...checked.values()].filter(({ check }) => check.status !== "NOT_FOUND").length;
+  const closed = [...checked.values()]
+    .filter(({ check }) => check.status === "CLOSED_PERMANENTLY" || check.status === "CLOSED_TEMPORARILY")
+    .map(({ name }) => name);
   const foods = option.draft.localFoods ?? [];
   // Named, so the traveller can judge before choosing -- not just a count.
   const flagged = [
     ...activities.flatMap((a) => (a.conflicts?.length ? [{ name: a.title, conflicts: a.conflicts }] : [])),
     ...foods.flatMap((f) => (f.conflicts?.length ? [{ name: f.name, conflicts: f.conflicts }] : [])),
   ];
-  return { meals: meals.length, restaurants, foods, flagged };
+  return { meals: meals.length, restaurants, foods, flagged, checkedCount: checked.size, found, closed };
 }
 
 /** Named HOTEL/TOUR candidates, which are the only items a rating applies to. */
@@ -157,6 +175,25 @@ function RatingBadge({ review }: { review?: AttachedReview }) {
       )}
     </span>
   );
+}
+
+/** Why some (or all) restaurants show no Google check. Silent when there's nothing to explain. */
+function RestaurantNote({ lookup }: { lookup: RestaurantLookupStatus }) {
+  if (lookup.status === "NOT_CONFIGURED") {
+    return <p>Restaurants weren&apos;t checked on Google: Google Places isn&apos;t configured.</p>;
+  }
+  if (lookup.status === "UNAVAILABLE") {
+    return <p>Restaurants couldn&apos;t be checked on Google just now. That&apos;s on us, not the restaurants.</p>;
+  }
+  if (lookup.status === "OK" && lookup.unchecked > 0) {
+    return (
+      <p>
+        Checked {lookup.checked} of {lookup.named} named restaurants on Google; the rest show no check (lookup limit or a
+        failed lookup).
+      </p>
+    );
+  }
+  return null;
 }
 
 function ReviewNote({ lookup }: { lookup: ReviewLookup }) {
@@ -388,6 +425,19 @@ export function ItineraryOptions({
                           }`}
                       </span>
                     </p>
+                    {food.checkedCount > 0 && (
+                      <p className="flex items-center gap-1.5 pl-6 text-xs text-ink-700">
+                        <BadgeCheck size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-success-700" />
+                        {food.found} of {food.checkedCount} checked restaurant{food.checkedCount === 1 ? "" : "s"} found on
+                        Google
+                      </p>
+                    )}
+                    {food.closed.length > 0 && (
+                      <p className="flex items-start gap-1.5 pl-6 text-xs font-medium text-danger-700">
+                        <AlertTriangle size={14} strokeWidth={1.75} aria-hidden="true" className="mt-px shrink-0" />
+                        Listed as closed on Google: {food.closed.join(", ")}
+                      </p>
+                    )}
                     {food.foods.length > 0 && (
                       <p className="pl-6 text-xs text-ink-500">
                         Local food to try: {food.foods.slice(0, 4).map((f) => f.name).join(", ")}
@@ -415,7 +465,10 @@ export function ItineraryOptions({
 
                 {hotelExcerpt && (
                   <blockquote className="mt-4 border-l-2 border-sand-300 pl-3 text-sm italic text-ink-700">
-                    “{hotelExcerpt.text}”
+                    {/* Real Google reviews run long; four lines is enough to get the gist on a card. */}
+                    <span className="line-clamp-4" title={hotelExcerpt.text}>
+                      “{hotelExcerpt.text}”
+                    </span>
                     {hotelExcerpt.authorName && (
                       <footer className="mt-1 text-xs not-italic text-ink-500">
                         — {hotelExcerpt.authorName}
@@ -465,6 +518,7 @@ export function ItineraryOptions({
               : "Estimated costs, for comparison. Real prices are on the booking sites we link you to."}
           </p>
           {lookup && <ReviewNote lookup={lookup} />}
+          {options[0]?.draft.restaurantLookup && <RestaurantNote lookup={options[0].draft.restaurantLookup} />}
           {summaries.some((f) => f.meals > 0) && <DietaryCaveat labels={dietary} />}
         </div>
       </div>

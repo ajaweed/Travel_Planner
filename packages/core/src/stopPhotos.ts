@@ -65,7 +65,8 @@ export function tokens(text: string): string[] {
     .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
 }
 
-function sameWord(a: string, b: string): boolean {
+/** Same word, allowing one to extend the other (4+ letters): "souk"/"souks". Shared with restaurantChecks. */
+export function sameWord(a: string, b: string): boolean {
   if (a === b) return true;
   // "souk"/"souks", "historic"/"historical", "lisbon"/"lisboa" is NOT this (different 5th letter).
   return Math.min(a.length, b.length) >= 4 && (a.startsWith(b) || b.startsWith(a));

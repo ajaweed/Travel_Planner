@@ -17,6 +17,7 @@ import { runBookingAgent, type BookableItem, type BookingOutcome } from "./agent
 import { getBudgetStatus } from "./agents/budgetAgent";
 import { notify } from "./agents/notificationAgent";
 import { attachRealReviews } from "./reviewLookup";
+import { checkRestaurants } from "./restaurantChecks";
 import { dietaryFromBrief, mergeDietary, type Dietary } from "./dietary";
 import type {
   EnrichedItineraryDayDraft,
@@ -196,9 +197,17 @@ export async function generateItineraryOptions(tripId: string): Promise<void> {
   }
 
   // attachRealReviews preserves order, so variantKeys[i] belongs to stored[i].
-  const stored = (await attachRealReviews(drafts, brief.destinations.join(", "))).map(
-    (option, i) => ({ ...option, variant: variantKeys[i] }),
-  );
+  // Restaurant checks run alongside (both are read-only Places lookups).
+  const [withReviews, restaurants] = await Promise.all([
+    attachRealReviews(drafts, brief.destinations.join(", ")),
+    checkRestaurants(drafts, brief.destinations),
+  ]);
+  const stored = withReviews.map((option, i) => ({
+    ...option,
+    variant: variantKeys[i],
+    restaurantChecks: restaurants.perOption[i],
+    restaurantLookup: restaurants.status,
+  }));
 
   await persistOptions(tripId, trip.currency, stored);
 
