@@ -7,6 +7,10 @@ import { googleMapsSearch, type BookingLink } from "./bookingLinks";
 import { withDestination } from "./researchLinks";
 import { foodCity } from "./activityPlaces";
 import { restaurantKey, type RestaurantCheck } from "./restaurantChecks";
+import type { OutdoorDraft } from "./agents/types";
+import type { OutdoorNeeds } from "./outdoors";
+import { outdoorView, type OutdoorView } from "./outdoorView";
+import type { TrailCheck } from "./trailChecks";
 import { type DietConflict, type Dietary, dietConflicts } from "./dietary";
 import { DiningDraftSchema, LocalFoodSchema, type DiningDraft, type LocalFood } from "./agents/types";
 
@@ -68,30 +72,36 @@ type SavedDay = {
 };
 type StoredDraftLike = {
   restaurantChecks?: Record<string, RestaurantCheck>;
-  days?: Array<{ dayIndex: number; activities?: Array<{ title?: string; dining?: DiningDraft }> }>;
+  outdoorChecks?: Record<string, RestaurantCheck>;
+  trailChecks?: Record<string, TrailCheck>;
+  days?: Array<{ dayIndex: number; activities?: Array<{ title?: string; dining?: DiningDraft; outdoor?: OutdoorDraft }> }>;
   localFoods?: LocalFood[];
 };
 
-export type PlanFood = {
+export type PlanExtras = {
   dining: Map<string, DiningView>;
+  /** Hike/nature details, checks and flags per saved activity id. */
+  outdoor: Map<string, OutdoorView>;
   /** Possible dietary conflicts per saved activity id (any stop, not just meals). */
   conflicts: Map<string, DietConflict[]>;
   localFoods: LocalFoodView[];
 };
 
 /**
- * Food for a chosen plan. Activities were saved from the selected option's
- * draft in order (selectItineraryOption -> materializeItinerary), so a saved
- * activity's (dayIndex, order) points at its draft activity. The title must
- * match too, so a plan edited later can never get the wrong meal attached.
+ * Food and outdoor details for a chosen plan. Activities were saved from the
+ * selected option's draft in order (selectItineraryOption ->
+ * materializeItinerary), so a saved activity's (dayIndex, order) points at its
+ * draft activity. The title must match too, so a plan edited later can never
+ * get the wrong meal or hike attached.
  */
-export function planFood(
+export function planExtras(
   savedDays: SavedDay[],
   selectedDraftJson: string | null | undefined,
-  dietary: Dietary | undefined,
+  needs: { dietary?: Dietary; outdoors?: OutdoorNeeds },
   cityFor: (activityId: string) => string | undefined,
   destinations: string[],
-): PlanFood {
+): PlanExtras {
+  const { dietary, outdoors } = needs;
   let draft: StoredDraftLike = {};
   try {
     if (selectedDraftJson) draft = JSON.parse(selectedDraftJson) as StoredDraftLike;
@@ -100,13 +110,18 @@ export function planFood(
   }
 
   const dining = new Map<string, DiningView>();
+  const outdoor = new Map<string, OutdoorView>();
   const conflicts = new Map<string, DietConflict[]>();
   for (const day of savedDays) {
     const draftDay = draft.days?.find((d) => d.dayIndex === day.dayIndex);
     for (const a of day.activities) {
       const d = draftDay?.activities?.[a.order];
-      const meal = d?.dining && d.title === a.title ? d.dining : undefined;
+      const same = d?.title === a.title;
+      const meal = same ? d?.dining : undefined;
       if (meal) dining.set(a.id, diningView(meal, cityFor(a.id), draft.restaurantChecks));
+      if (same && d?.outdoor) {
+        outdoor.set(a.id, outdoorView(d.outdoor, cityFor(a.id), outdoors, { places: draft.outdoorChecks, trails: draft.trailChecks }));
+      }
       const c = activityConflicts({ ...a, bookable: { candidateName: a.candidateName }, dining: meal }, dietary);
       if (c.length) conflicts.set(a.id, c);
     }
@@ -114,7 +129,7 @@ export function planFood(
   const localFoods = (Array.isArray(draft.localFoods) ? draft.localFoods : [])
     .filter((f) => f && typeof f.name === "string")
     .map((f) => localFoodView(f, dietary, foodCity(f, destinations)));
-  return { dining, conflicts, localFoods };
+  return { dining, outdoor, conflicts, localFoods };
 }
 
 /**

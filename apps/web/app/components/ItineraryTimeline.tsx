@@ -15,6 +15,7 @@ import {
 import { BookingLinks } from "./BookingLinks";
 import { PhotoCredit, PhotoFill, type Photo } from "./DestinationPhoto";
 import { ConflictNote, DiningDetail, type DietConflict, type Dining } from "./Food";
+import { OutdoorDetail, outdoorIcon, type Outdoor } from "./Outdoor";
 import { ResearchLinks } from "./ResearchLinks";
 import { StatusPill } from "./StatusPill";
 import { CARD_CLASSES, fmtMoney } from "./ui";
@@ -42,6 +43,7 @@ type Activity = {
   booking?: Booking | null;
   research?: Link[];
   dining?: Dining;
+  outdoor?: Outdoor;
   /** Possible conflicts with the traveller's dietary needs (keyword check). */
   conflicts?: DietConflict[];
 };
@@ -193,7 +195,9 @@ function ActivityRow({
   const [photoBroken, setPhotoBroken] = useState(false);
   const photo = photoBroken ? undefined : foundPhoto;
   const booking = activity.booking;
-  const Icon = (booking && KIND_ICONS[booking.kind]) || (activity.dining ? UtensilsCrossed : MapPin);
+  const Icon =
+    (booking && KIND_ICONS[booking.kind]) ||
+    (activity.dining ? UtensilsCrossed : activity.outdoor ? outdoorIcon(activity.outdoor.type) : MapPin);
   const linkOut = booking?.status === "LINK_OUT";
   const awaiting = booking?.status === "AWAITING_CONFIRMATION";
   const showFallback = aiMode && booking && (booking.links?.length ?? 0) > 0;
@@ -232,6 +236,7 @@ function ActivityRow({
           </p>
           {activity.description && <p className="mt-0.5 text-sm text-ink-500">{activity.description}</p>}
           {activity.dining && <DiningDetail dining={activity.dining} />}
+          {activity.outdoor && <OutdoorDetail outdoor={activity.outdoor} />}
           <ConflictNote conflicts={activity.conflicts} className="mt-1.5" />
           <ResearchLinks links={activity.research} subject={activity.title} />
           {photo && <PhotoCredit photo={photo} label={photo.subject} className="mt-1" />}

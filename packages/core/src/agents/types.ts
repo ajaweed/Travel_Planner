@@ -3,6 +3,7 @@ import { z } from "zod";
 import { DietarySchema, NO_DIETARY } from "../dietary";
 import { NO_OUTDOOR_NEEDS, OutdoorNeedsSchema, normalizeDifficulty } from "../outdoors";
 import type { RestaurantCheck, RestaurantLookupStatus } from "../restaurantChecks";
+import type { TrailCheck } from "../trailChecks";
 
 // --- TripBrief: what the ConciergeAgent extracts from free text ---
 
@@ -266,6 +267,10 @@ export type StoredItineraryOption = Omit<ItineraryOptionDraft, "days"> & {
    */
   restaurantChecks?: Record<string, RestaurantCheck>;
   restaurantLookup?: RestaurantLookupStatus;
+  /** Google Places checks of outdoor stops' trailheads/parks/beaches, keyed by restaurantKey(placeName). */
+  outdoorChecks?: Record<string, RestaurantCheck>;
+  /** OpenStreetMap checks of named trails, keyed by restaurantKey(trailName). */
+  trailChecks?: Record<string, TrailCheck>;
 };
 
 // --- Budget ---

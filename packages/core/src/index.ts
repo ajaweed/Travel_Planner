@@ -33,8 +33,8 @@ export {
   mergeDietary,
 } from "./dietary";
 export type { DietConflict, DietTag, Dietary } from "./dietary";
-export { activityConflicts, diningView, localFoodView, planFood } from "./food";
-export type { DiningView, LocalFoodView, PlanFood } from "./food";
+export { activityConflicts, diningView, localFoodView, planExtras } from "./food";
+export type { DiningView, LocalFoodView, PlanExtras } from "./food";
 export type { DiningDraft, LocalFood } from "./agents/types";
 export type { RestaurantCheck, RestaurantLookupStatus } from "./restaurantChecks";
 export {
@@ -47,3 +47,6 @@ export {
 } from "./outdoors";
 export type { AccessTag, Difficulty, OutdoorNeeds } from "./outdoors";
 export type { OutdoorDraft } from "./agents/types";
+export { outdoorView } from "./outdoorView";
+export type { OutdoorView } from "./outdoorView";
+export type { TrailCheck } from "./trailChecks";

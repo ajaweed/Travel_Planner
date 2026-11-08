@@ -11,6 +11,9 @@ import {
   foodCity,
   listItineraryOptions,
   localFoodView,
+  outdoorNeedLabels,
+  outdoorNeedsFromBrief,
+  outdoorView,
   resolveDraftCities,
 } from "@trip-planner/core";
 
@@ -22,6 +25,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     ]);
     const destinations = destinationsFromBrief(trip?.briefJson);
     const dietary = dietaryFromBrief(trip?.briefJson);
+    const outdoors = outdoorNeedsFromBrief(trip?.briefJson);
 
     // Named hotels/tours (the places the cards list) get "see what people say"
     // links so the traveller can vet them before choosing. Only those items
@@ -34,7 +38,17 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
           // Every stop is checked against the traveller's dietary needs (the
           // agent can slip a wine tour into a halal plan), recomputed on read.
           const conflicts = activityConflicts(raw, dietary);
-          const activity = conflicts.length ? { ...raw, conflicts } : raw;
+          let activity = conflicts.length ? { ...raw, conflicts } : raw;
+          // Hikes/nature: details plus our place/trail checks and fitness flags.
+          if (activity.outdoor) {
+            activity = {
+              ...activity,
+              outdoor: outdoorView(activity.outdoor, cities[d]?.[a], outdoors, {
+                places: option.draft.outdoorChecks,
+                trails: option.draft.trailChecks,
+              }),
+            };
+          }
           // Meals: a map link for the named place.
           if (activity.dining) {
             return { ...activity, dining: diningView(activity.dining, cities[d]?.[a], option.draft.restaurantChecks) };
@@ -65,7 +79,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       option.draft.localFoods = foods.map((f) => localFoodView(f, dietary, foodCity(f, destinations)));
     }
 
-    return NextResponse.json({ options, dietary: dietaryLabels(dietary) });
+    return NextResponse.json({ options, dietary: dietaryLabels(dietary), outdoorNeeds: outdoorNeedLabels(outdoors) });
   } catch (err) {
     console.error(`GET /api/trips/${params.id}/options failed`, err);
     const message = err instanceof Error ? err.message : "Unknown error";

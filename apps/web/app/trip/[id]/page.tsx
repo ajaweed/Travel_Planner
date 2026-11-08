@@ -26,6 +26,7 @@ import { StatusPill } from "../../components/StatusPill";
 import { TripPhotoBanner } from "../../components/TripPhotoBanner";
 import type { Photo } from "../../components/DestinationPhoto";
 import { DietaryBadges, LocalFoodSection } from "../../components/Food";
+import { OutdoorCaveat } from "../../components/Outdoor";
 import { Alert, buttonClasses, CARD_CLASSES, INPUT_CLASSES } from "../../components/ui";
 
 type TripData = any; // the API route returns Prisma's shape directly; tighten with a shared type once it stabilizes.
@@ -37,6 +38,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const [answering, setAnswering] = useState(false);
   const [options, setOptions] = useState<ItineraryOption[] | null>(null);
   const [optionsDietary, setOptionsDietary] = useState<string[]>([]);
+  const [optionsOutdoorNeeds, setOptionsOutdoorNeeds] = useState<string[]>([]);
   const [choosingId, setChoosingId] = useState<string | null>(null);
   const [chooseError, setChooseError] = useState<string | null>(null);
   // "info" for the AI-mode "still working" message, which isn't a failure.
@@ -121,6 +123,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
         if (!cancelled) {
           setOptions(json.options ?? []);
           setOptionsDietary(Array.isArray(json.dietary) ? json.dietary : []);
+          setOptionsOutdoorNeeds(Array.isArray(json.outdoorNeeds) ? json.outdoorNeeds : []);
           setOptionsError(null);
         }
       } catch (err) {
@@ -325,7 +328,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
               )}
             </div>
           )}
-          <DietaryBadges labels={data.food?.dietary} className="mt-3" />
+          <DietaryBadges labels={[...(data.food?.dietary ?? []), ...(data.outdoorNeeds ?? [])]} className="mt-3" />
           <TripPhotoBanner destinations={Array.isArray(data.destinations) ? data.destinations : []} />
         </div>
       </div>
@@ -458,6 +461,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
               error={chooseError}
               errorTone={chooseErrorTone}
               dietary={optionsDietary}
+              outdoorNeeds={optionsOutdoorNeeds}
               modePicker={
                 hasBookables ? (
                   <BookingModePicker
@@ -523,6 +527,11 @@ export default function TripPage({ params }: { params: { id: string } }) {
               Your itinerary
             </h2>
             <ItineraryTimeline days={trip.itinerary} aiMode={aiMode} testMode={testMode} stopPhotos={stopPhotos} />
+            {trip.itinerary.some((d: any) => d.activities.some((a: any) => a.outdoor)) && (
+              <div className="mt-6">
+                <OutdoorCaveat />
+              </div>
+            )}
           </section>
         )}
 

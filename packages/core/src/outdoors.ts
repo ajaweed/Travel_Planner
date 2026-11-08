@@ -25,7 +25,9 @@ export function normalizeDifficulty(raw: unknown): Difficulty | undefined {
 
 /** Every access need a piece of wording names: "bad knees, travelling with a toddler" -> both. */
 export function normalizeAccessTags(raw: string): AccessTag[] {
-  const t = raw.toLowerCase();
+  // Underscores count as word characters, so "young_kids" must become
+  // "young kids" or the tags themselves (what the picker sends) never match.
+  const t = raw.toLowerCase().replace(/[_-]+/g, " ");
   const out: AccessTag[] = [];
   if (/\b(wheelchair|step[- ]free)\b/.test(t)) out.push("wheelchair");
   if (/\b(mobility|knees?|hips?|cane|walking stick|elderly|senior)\b/.test(t)) out.push("limited_mobility");

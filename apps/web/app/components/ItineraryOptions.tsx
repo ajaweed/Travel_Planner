@@ -10,6 +10,7 @@ import {
   Check,
   Gauge,
   Gem,
+  Mountain,
   Info,
   Loader2,
   MapPin,
@@ -25,6 +26,7 @@ import {
 import type { BookingMode } from "@trip-planner/db";
 import { DietaryBadges, DietaryCaveat, type DietConflict, type Dining, type LocalFood } from "./Food";
 import type { RestaurantLookupStatus } from "@trip-planner/core";
+import { OutdoorCaveat, type Outdoor } from "./Outdoor";
 import { ResearchLinks } from "./ResearchLinks";
 import { Alert, buttonClasses, fmtMoney } from "./ui";
 
@@ -64,7 +66,7 @@ type OptionDay = {
   dayIndex: number;
   date?: string;
   summary?: string;
-  activities: Array<{ title: string; bookable?: Bookable; dining?: Dining; conflicts?: DietConflict[] }>;
+  activities: Array<{ title: string; bookable?: Bookable; dining?: Dining; outdoor?: Outdoor; conflicts?: DietConflict[] }>;
 };
 
 type ReviewLookup =
@@ -132,6 +134,16 @@ function foodSummary(option: ItineraryOption) {
     ...foods.flatMap((f) => (f.conflicts?.length ? [{ name: f.name, conflicts: f.conflicts }] : [])),
   ];
   return { meals: meals.length, restaurants, foods, flagged, checkedCount: checked.size, found, closed };
+}
+
+/** Hikes and nature outings in an option: counts by difficulty, and anything flagged (named). */
+function outdoorSummary(option: ItineraryOption) {
+  const outings = option.draft.days.flatMap((d) => d.activities.flatMap((a) => (a.outdoor ? [{ title: a.title, o: a.outdoor }] : [])));
+  const byDifficulty = (["easy", "moderate", "hard"] as const)
+    .map((level) => ({ level, n: outings.filter(({ o }) => o.difficulty === level).length }))
+    .filter(({ n }) => n > 0);
+  const flagged = outings.filter(({ o }) => o.flags?.length).map(({ title, o }) => ({ name: title, flags: o.flags }));
+  return { count: outings.length, byDifficulty, flagged };
 }
 
 /** Named HOTEL/TOUR candidates, which are the only items a rating applies to. */
@@ -257,6 +269,7 @@ export function ItineraryOptions({
   bookingMode = "SELF",
   modePicker,
   dietary,
+  outdoorNeeds,
 }: {
   options: ItineraryOption[];
   onChoose: (optionId: string) => void;
@@ -270,12 +283,15 @@ export function ItineraryOptions({
   modePicker?: React.ReactNode;
   /** Labels of the traveller's dietary needs ("Halal", "Allergy: peanuts"). */
   dietary?: string[];
+  /** Labels of their fitness/access needs ("Easy walks only", "Young kids"). */
+  outdoorNeeds?: string[];
 }) {
   const aiBooks = bookingMode === "AI";
   const cheapest = Math.min(...options.map((o) => o.estimatedTotalCents));
   const lookup = options[0]?.draft.reviewLookup;
   const single = options.length === 1;
   const summaries = options.map(foodSummary);
+  const outdoorSummaries = options.map(outdoorSummary);
 
   return (
     <section className="mt-12" aria-labelledby="options-heading">
@@ -286,7 +302,7 @@ export function ItineraryOptions({
         <ShieldCheck size={18} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-lagoon-600" />
         Nothing is booked until you choose a plan.
       </p>
-      <DietaryBadges labels={dietary} className="mt-2" />
+      <DietaryBadges labels={[...(dietary ?? []), ...(outdoorNeeds ?? [])]} className="mt-2" />
 
       {modePicker}
 
@@ -317,6 +333,7 @@ export function ItineraryOptions({
           const isChoosing = choosingId === option.id;
           const locked = choosingId !== null && !isChoosing;
           const food = summaries[i]!;
+          const outdoor = outdoorSummaries[i]!;
           const hotelExcerpt = places
             .find((p) => p.kind === "HOTEL" && p.review?.excerpts?.length)
             ?.review?.excerpts?.[0];
@@ -463,6 +480,34 @@ export function ItineraryOptions({
                   </div>
                 )}
 
+                {outdoor.count > 0 && (
+                  <div className="mt-4 space-y-1.5 border-t border-sand-200 pt-4 text-sm text-ink-700">
+                    <p className="flex items-start gap-2">
+                      <Mountain size={16} strokeWidth={1.75} aria-hidden="true" className="mt-0.5 shrink-0 text-ink-500" />
+                      <span>
+                        {outdoor.count} outdoor outing{outdoor.count === 1 ? "" : "s"}
+                        {outdoor.byDifficulty.length > 0 && `: ${outdoor.byDifficulty.map(({ level, n }) => `${n} ${level}`).join(", ")}`}
+                      </span>
+                    </p>
+                    {outdoor.flagged.length > 0 && (
+                      <div className="pl-6 text-xs text-warning-700">
+                        <p className="flex items-start gap-1.5 font-medium">
+                          <AlertTriangle size={14} strokeWidth={1.75} aria-hidden="true" className="mt-px shrink-0" />
+                          Check before choosing:
+                        </p>
+                        <ul className="mt-0.5 list-disc space-y-0.5 pl-9">
+                          {outdoor.flagged.slice(0, 3).map((f, k) => (
+                            <li key={`${f.name}-${k}`}>
+                              {f.name}: {f.flags.join(" ")}
+                            </li>
+                          ))}
+                          {outdoor.flagged.length > 3 && <li>and {outdoor.flagged.length - 3} more</li>}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {hotelExcerpt && (
                   <blockquote className="mt-4 border-l-2 border-sand-300 pl-3 text-sm italic text-ink-700">
                     {/* Real Google reviews run long; four lines is enough to get the gist on a card. */}
@@ -520,6 +565,7 @@ export function ItineraryOptions({
           {lookup && <ReviewNote lookup={lookup} />}
           {options[0]?.draft.restaurantLookup && <RestaurantNote lookup={options[0].draft.restaurantLookup} />}
           {summaries.some((f) => f.meals > 0) && <DietaryCaveat labels={dietary} />}
+          {outdoorSummaries.some((o) => o.count > 0) && <OutdoorCaveat />}
         </div>
       </div>
     </section>
