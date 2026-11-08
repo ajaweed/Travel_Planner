@@ -8,6 +8,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   OPTION_NOT_FOUND: 404,
   OPTION_ALREADY_CHOSEN: 409,
   TRIP_PAST_PLANNING: 409,
+  AI_BOOKING_UNAVAILABLE: 409,
 };
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -24,10 +25,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const mode = body.bookingMode === "AI" ? "AI" : "SELF";
 
   try {
-    // SELF: locks in the plan (-> READY_TO_BOOK) with link-out bookings; fast.
-    // AI: locks in the plan (-> BOOKING) and runs the full booking pass before
-    // returning. The status flips immediately, so the dashboard's poll shows
-    // per-item progress while this request is still in flight.
+    // SELF: locks in the plan (-> READY_TO_BOOK) with link-out bookings.
+    // AI: locks in the plan (-> BOOKING) and starts the booking pass in the
+    // background; the dashboard's poll shows per-item progress. Both return
+    // as soon as the plan is written.
     await selectItineraryOption(params.id, body.optionId, mode);
     return NextResponse.json({ ok: true });
   } catch (err) {

@@ -12,8 +12,9 @@ import { prisma, type BookingMode } from "@trip-planner/db";
 import { runConciergeAgent } from "./agents/conciergeAgent";
 import { ITINERARY_VARIANTS, runItineraryAgent } from "./agents/itineraryAgent";
 import { destinationFor, type LinkSearchParams } from "./bookingLinks";
-import { runBookingAgent, type BookableItem } from "./agents/bookingAgent";
-import { getBudgetStatus, recordBudgetEntry } from "./agents/budgetAgent";
+import { getAiBookingReadiness } from "./aiBookingReadiness";
+import { runBookingAgent, type BookableItem, type BookingOutcome } from "./agents/bookingAgent";
+import { getBudgetStatus } from "./agents/budgetAgent";
 import { notify } from "./agents/notificationAgent";
 import { attachRealReviews } from "./reviewLookup";
 import type {
@@ -30,7 +31,8 @@ import type {
 export type OrchestratorErrorCode =
   | "OPTION_NOT_FOUND"
   | "OPTION_ALREADY_CHOSEN"
-  | "TRIP_PAST_PLANNING";
+  | "TRIP_PAST_PLANNING"
+  | "AI_BOOKING_UNAVAILABLE";
 
 export class OrchestratorError extends Error {
   constructor(
@@ -272,6 +274,16 @@ export async function selectItineraryOption(
     );
   }
 
+  // With no provider credentials at all, every AI booking is a guaranteed
+  // NOT_CONFIGURED failure after several paid model calls per item -- refuse
+  // up front instead of burning API spend on a known outcome.
+  if (mode === "AI" && !getAiBookingReadiness().anyConfigured) {
+    throw new OrchestratorError(
+      "AI_BOOKING_UNAVAILABLE",
+      "AI booking isn't available yet: no booking providers are connected. Choose \"I'll book it myself\" to get booking links.",
+    );
+  }
+
   const claimed = await prisma.trip.updateMany({
     where: { id: tripId, status: "CHOOSING" },
     data: { status: mode === "AI" ? "BOOKING" : "READY_TO_BOOK", bookingMode: mode },
@@ -324,7 +336,60 @@ export async function selectItineraryOption(
         ? `"${option.label}" it is. The AI is now booking ${things} for you.`
         : `"${option.label}" it is. Nothing in this plan needs booking.`,
   });
-  await runBookingPipeline(bookableItems);
+  // The booking pass is several model turns per item, run sequentially --
+  // minutes, not milliseconds -- so it must not live inside the HTTP request
+  // (proxy/host timeouts would kill it mid-item). It runs detached on this
+  // long-lived Node server; the trip page polls for progress, and
+  // reapStalledBookings() cleans up if the process dies part-way.
+  // NOTE: on a serverless host this needs a real job queue instead.
+  void runAiBookingPass(tripId, bookableItems);
+}
+
+async function runAiBookingPass(tripId: string, items: BookableItem[]): Promise<void> {
+  try {
+    await runBookingPipeline(items);
+  } catch (err) {
+    console.error(`AI booking pass crashed for trip ${tripId}:`, err);
+  }
+  try {
+    await finalizeTripStatus(tripId);
+  } catch (err) {
+    // Leaves the trip in BOOKING; reapStalledBookings() will finalize it.
+    console.error(`Could not finalize trip ${tripId}:`, err);
+  }
+}
+
+/** How long a BOOKING trip can go without any booking-row progress. */
+const STALL_MS = 15 * 60 * 1000;
+
+/**
+ * If an AI booking pass died part-way (server restart, crash), the trip would
+ * sit in BOOKING with SEARCHING rows forever -- and SEARCHING rows get no
+ * fallback links. Called on trip reads: once nothing has moved for STALL_MS,
+ * mark the leftover rows FAILED (which gives them links) and finalize.
+ * Each item touches its row when it starts, so a long single item still
+ * counts as progress.
+ */
+export async function reapStalledBookings(tripId: string, now: Date = new Date()): Promise<void> {
+  const trip = await prisma.trip.findUnique({ where: { id: tripId } });
+  if (!trip || trip.status !== "BOOKING" || trip.bookingMode !== "AI") return;
+
+  const latest = await prisma.booking.findFirst({
+    where: { tripId },
+    orderBy: { updatedAt: "desc" },
+    select: { updatedAt: true },
+  });
+  const lastProgress = latest?.updatedAt ?? trip.updatedAt;
+  if (now.getTime() - lastProgress.getTime() < STALL_MS) return;
+
+  await prisma.booking.updateMany({
+    where: { tripId, status: "SEARCHING" },
+    data: {
+      status: "FAILED",
+      failureReason:
+        "Booking was interrupted before this item finished. It may not have been booked -- check your email for a confirmation before booking it yourself.",
+    },
+  });
   await finalizeTripStatus(tripId);
 }
 
@@ -467,10 +532,52 @@ async function runBookingPipeline(items: BookableItem[]): Promise<void> {
   }
 }
 
+/**
+ * Thrown when the provider confirmed a booking but we then failed to record
+ * it. The money is spent: this must never be turned into FAILED, which would
+ * offer the user links to book (and pay for) the same thing again.
+ */
+class BookedButUnrecordedError extends Error {
+  constructor(
+    readonly outcome: Extract<BookingOutcome, { status: "BOOKED" }>,
+    cause: unknown,
+  ) {
+    super(`Provider booked ${outcome.providerRef} but recording it failed: ${String(cause)}`);
+  }
+}
+
 async function markBookingCrashed(item: BookableItem, err: unknown): Promise<void> {
+  if (err instanceof BookedButUnrecordedError) {
+    // One more attempt at the essential fact: it IS booked, with this ref.
+    // AWAITING_CONFIRMATION (no links) + an explicit reason if even that
+    // fails is handled by the outer catch's log -- never FAILED.
+    try {
+      await prisma.booking.update({
+        where: { id: item.bookingId },
+        data: {
+          status: "BOOKED",
+          providerRef: err.outcome.providerRef,
+          provider: err.outcome.provider,
+          priceCents: err.outcome.priceCents,
+          currency: err.outcome.currency,
+        },
+      });
+    } catch (nested) {
+      console.error(
+        `CRITICAL: booking ${item.bookingId} was booked with provider (ref ${err.outcome.providerRef}) but could not be recorded:`,
+        nested,
+      );
+    }
+    return;
+  }
+
   const reason =
     err instanceof Error ? `Unexpected error while booking: ${err.message}` : "Unexpected error while booking.";
   try {
+    // Re-read first: if the row already says BOOKED, the failure came after
+    // the money moved (e.g. a notification write) and must not erase that.
+    const current = await prisma.booking.findUnique({ where: { id: item.bookingId } });
+    if (!current || current.status === "BOOKED") return;
     const booking = await prisma.booking.update({
       where: { id: item.bookingId },
       data: { status: "FAILED", failureReason: reason },
@@ -487,35 +594,31 @@ async function markBookingCrashed(item: BookableItem, err: unknown): Promise<voi
 }
 
 async function processBooking(item: BookableItem): Promise<void> {
-  const booking = await prisma.booking.findUniqueOrThrow({ where: { id: item.bookingId } });
+  // Touch the row as this item starts: it's the progress signal
+  // reapStalledBookings() watches.
+  const booking = await prisma.booking.update({
+    where: { id: item.bookingId },
+    data: { status: "SEARCHING" },
+  });
   const budgetStatus = await getBudgetStatus(booking.tripId);
 
   const outcome = await runBookingAgent(item, budgetStatus);
 
   if (outcome.status === "BOOKED") {
-    await prisma.booking.update({
-      where: { id: item.bookingId },
-      data: {
-        status: "BOOKED",
-        providerRef: outcome.providerRef,
-        provider: outcome.provider,
-        priceCents: outcome.priceCents,
-        currency: outcome.currency,
-        idempotencyKey: `booking_${item.bookingId}`,
-      },
-    });
-    await recordBudgetEntry({
-      tripId: booking.tripId,
-      label: `${item.kind} booking confirmed`,
-      amountCents: outcome.priceCents,
-      currency: outcome.currency,
-      bookingId: item.bookingId,
-    });
+    // The provider has already taken the money. Status + budget entry are
+    // written atomically; if that fails it's reported as booked-but-
+    // unrecorded, never as a failure (see BookedButUnrecordedError).
+    try {
+      await recordBookedOutcome(booking.tripId, item, outcome);
+    } catch (err) {
+      throw new BookedButUnrecordedError(outcome, err);
+    }
+    // Best effort: a lost notification must not touch the booking itself.
     await notify({
       tripId: booking.tripId,
       kind: "BOOKING_CONFIRMED",
       message: `Booked: ${item.searchHint} (confirmation ${outcome.providerRef}).`,
-    });
+    }).catch((err) => console.error(`notify failed for booking ${item.bookingId}:`, err));
     return;
   }
 
@@ -534,7 +637,7 @@ async function processBooking(item: BookableItem): Promise<void> {
       message: `A ${item.kind.toLowerCase()} for "${item.searchHint}" would cost ${formatMoney(
         outcome.priceCents,
         outcome.currency,
-      )}, which exceeds your remaining budget. Raise your budget or choose a cheaper option to continue.`,
+      )}, which is more than your remaining budget, so the AI didn't book it. You can book it yourself with the links on your trip page.`,
     });
     return;
   }
@@ -559,6 +662,39 @@ async function finalizeTripStatus(tripId: string): Promise<void> {
     where: { id: tripId },
     data: { status: anyNeedsAttention ? "NEEDS_ATTENTION" : "CONFIRMED" },
   });
+}
+
+async function recordBookedOutcome(
+  tripId: string,
+  item: BookableItem,
+  outcome: Extract<BookingOutcome, { status: "BOOKED" }>,
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.booking.update({
+      where: { id: item.bookingId },
+      data: {
+        status: "BOOKED",
+        providerRef: outcome.providerRef,
+        provider: outcome.provider,
+        priceCents: outcome.priceCents,
+        currency: outcome.currency,
+        idempotencyKey: `booking_${item.bookingId}`,
+      },
+    }),
+    prisma.budgetEntry.create({
+      data: {
+        tripId,
+        label: `${item.kind} booking confirmed`,
+        amountCents: outcome.priceCents,
+        currency: outcome.currency,
+        bookingId: item.bookingId,
+      },
+    }),
+    prisma.trip.update({
+      where: { id: tripId },
+      data: { budgetSpentCents: { increment: outcome.priceCents } },
+    }),
+  ]);
 }
 
 function formatMoney(cents: number, currency: string): string {

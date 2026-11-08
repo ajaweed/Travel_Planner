@@ -5,6 +5,7 @@ import {
   getBudgetStatus,
   getUnreadNotifications,
   linksForStoredBooking,
+  reapStalledBookings,
 } from "@trip-planner/core";
 
 // In AI mode, anything the agent couldn't book (failed, or waiting on the
@@ -14,6 +15,8 @@ import {
 const NO_LINKS = new Set(["BOOKED", "CANCELLED", "SEARCHING"]);
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  // Cheap no-op unless an AI booking pass died part-way; see the function.
+  await reapStalledBookings(params.id);
   const trip = await prisma.trip.findUnique({
     where: { id: params.id },
     include: {
@@ -39,7 +42,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       booking: activity.booking && {
         ...activity.booking,
         links:
-          !NO_LINKS.has(activity.booking.status)
+          activity.booking.status === "LINK_OUT" ||
+          // Fallback links only on AI-mode trips: legacy (pre-link) rows only
+          // stored a hint, so their links would lack dates and destination.
+          (trip.bookingMode === "AI" && !NO_LINKS.has(activity.booking.status))
             ? linksForStoredBooking(activity.booking.kind, activity.booking.searchParamsJson)
             : [],
       },

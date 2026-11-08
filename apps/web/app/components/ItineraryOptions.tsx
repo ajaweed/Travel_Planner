@@ -1,5 +1,7 @@
 "use client";
 
+import type { BookingMode } from "@trip-planner/db";
+
 // The options-comparison view: 2-3 candidate itineraries side by side with
 // enough to actually choose between them (cost delta, pace, shape, and real
 // ratings on the named hotels/tours). Implements the ux-designer spec in
@@ -172,7 +174,7 @@ export function ItineraryOptions({
   choosingId: string | null;
   disabled: boolean;
   error: string | null;
-  bookingMode?: "SELF" | "AI";
+  bookingMode?: BookingMode;
 }) {
   const aiBooks = bookingMode === "AI";
   const cheapest = Math.min(...options.map((o) => o.estimatedTotalCents));

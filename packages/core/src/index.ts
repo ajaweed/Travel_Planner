@@ -5,5 +5,6 @@ export { getBudgetStatus } from "./agents/budgetAgent";
 export { getUnreadNotifications, markAllRead } from "./agents/notificationAgent";
 export { buildBookingLinks, linksForStoredBooking } from "./bookingLinks";
 export { getAiBookingReadiness } from "./aiBookingReadiness";
+export { reapStalledBookings } from "./orchestrator";
 export type { AiBookingReadiness } from "./aiBookingReadiness";
 export type { BookingLink, LinkSearchParams } from "./bookingLinks";

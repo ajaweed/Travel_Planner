@@ -15,7 +15,10 @@ export async function getBudgetStatus(tripId: string): Promise<BudgetStatus> {
     .reduce((sum, b) => sum + (b.priceCents ?? 0), 0);
 
   const pendingCents = bookings
-    .filter((b) => b.status === "AWAITING_CONFIRMATION" || b.status === "OPTIONS_FOUND")
+    // AWAITING_CONFIRMATION deliberately excluded: it means the agent did NOT
+    // book because the quote was over budget. Counting that quote as pending
+    // made one expensive hotel starve every later item of budget.
+    .filter((b) => b.status === "OPTIONS_FOUND")
     .reduce((sum, b) => sum + (b.priceCents ?? 0), 0);
 
   const remainingCents = trip.budgetTotalCents - committedCents - pendingCents;

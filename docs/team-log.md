@@ -314,3 +314,34 @@ clear NOT_CONFIGURED reason, trip NEEDS_ATTENTION, every item showing fallback l
 BOOKING_FAILED notifications. Not yet built (in known gaps): payment-method collection for
 live AI booking, "I booked this myself" control, approve/skip on AWAITING_CONFIRMATION,
 and auth on `/choose` -- which now matters again because AI mode can spend.
+`/code-review` (medium) on `backend-dev/ai-booking-option` raised 10 findings, mostly in
+the booking pipeline restored verbatim from before link-out (restoring it unchanged
+revived its bugs -- lesson recorded). 9 fixed:
+- **Double charge:** a DB failure after the provider booked used to overwrite the row to
+  FAILED and offer rebooking links. Now status + budget entry + spent total are one
+  transaction (`recordBookedOutcome`); a failure there throws `BookedButUnrecordedError`,
+  which retries recording BOOKED and is never turned into FAILED; `markBookingCrashed`
+  re-reads and never downgrades a BOOKED row; the confirmation notify is best-effort.
+- **Budget starvation:** AWAITING_CONFIRMATION (an over-budget quote the agent did NOT
+  book) no longer counts as pending budget, so one pricey hotel can't block every later item.
+- **Request-bound pass:** the AI booking pass now runs detached; `/choose` returns in
+  ~0.5s. `reapStalledBookings()` (run on trip reads) fails leftover SEARCHING rows after
+  15 min with no row progress -- reason tells the user to check email before rebooking --
+  and finalizes. Each item touches its row on start as the progress signal. Serverless
+  hosting would need a real queue (noted in code).
+- AI mode refused server-side (`AI_BOOKING_UNAVAILABLE`, 409) when no provider has
+  keys; the picker disables the AI card with the reason.
+- Readiness: Stripe counts as production only with an `sk_live_` key; new `anyLive`
+  drives a "some providers are live, real charges possible" caveat (the old copy claimed
+  nothing would be charged in that state).
+- BUDGET_ALERT copy no longer promises a retry that doesn't exist; points to the links.
+- Fallback links only on AI-mode trips (legacy rows only stored a hint).
+- Client components import `BookingMode` / `AiBookingReadiness` types from the packages.
+Not done: de-duplicating `formatMoney` across three files (cosmetic).
+Verified live: AI with no keys -> 409, trip untouched; AI with a fake Viator key ->
+200 in 0.48s, background pass ran 4 items SEARCHING (0 links) -> FAILED (with links),
+trip NEEDS_ATTENTION in 23s, tour hit Viator sandbox and reported the 401 honestly;
+simulated 20-min stall -> one page load reaped it to FAILED with links. 60 tests,
+typecheck, build pass. Merged to `main` and pushed. Reviewed by `/code-review`.
+**For ux-designer:** visual-design.md §4.9's small link on SEARCHING rows conflicts with
+the no-links-while-searching decision above -- please drop it when next revising.

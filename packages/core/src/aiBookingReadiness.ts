@@ -16,6 +16,8 @@ export type AiBookingReadiness = {
   live: boolean;
   /** At least one provider has credentials (sandbox or production). */
   anyConfigured: boolean;
+  /** At least one provider is configured for production: some real bookings/charges can happen. */
+  anyLive: boolean;
   providers: ProviderReadiness[];
 };
 
@@ -41,12 +43,17 @@ export function getAiBookingReadiness(env: NodeJS.ProcessEnv = process.env): AiB
     {
       provider: "payments",
       configured: has(env.STRIPE_SECRET_KEY),
-      mode: env.STRIPE_ENV === "live" ? "production" : "sandbox",
+      // Mirrors payments.ts, which refuses STRIPE_ENV=live without an sk_live_ key.
+      mode:
+        env.STRIPE_ENV === "live" && (env.STRIPE_SECRET_KEY ?? "").startsWith("sk_live_")
+          ? "production"
+          : "sandbox",
     },
   ];
   return {
     live: providers.every((p) => p.configured && p.mode === "production"),
     anyConfigured: providers.some((p) => p.configured),
+    anyLive: providers.some((p) => p.configured && p.mode === "production"),
     providers,
   };
 }
