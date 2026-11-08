@@ -178,21 +178,43 @@ export function destinationFor(destinations: string[], ...texts: Array<string | 
 }
 
 /**
+ * Safely reads a Booking row's stored searchParamsJson. JSON.parse happily
+ * returns null, numbers or arrays; only a plain object is usable, and nothing
+ * here may take down the trip page. Blank strings are dropped so callers'
+ * fallbacks (`??`) actually apply.
+ */
+export function parseStoredSearchParams(searchParamsJson: string): Partial<LinkSearchParams> {
+  try {
+    const parsed: unknown = JSON.parse(searchParamsJson);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "string" && v.trim() === "") continue;
+      out[k] = v;
+    }
+    return out as Partial<LinkSearchParams>;
+  } catch {
+    return {};
+  }
+}
+
+/** The trip's destinations from its stored brief JSON; [] if unreadable. */
+export function destinationsFromBrief(briefJson: string | null | undefined): string[] {
+  if (!briefJson) return [];
+  try {
+    const d: unknown = JSON.parse(briefJson)?.destinations;
+    return Array.isArray(d) ? d.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Reads a Booking row's stored searchParamsJson. Rows created before the
  * link-out change only stored { searchHint }; those still get hint-based links.
  */
 export function linksForStoredBooking(kind: string, searchParamsJson: string): BookingLink[] {
-  let stored: Partial<LinkSearchParams> = {};
-  try {
-    const parsed: unknown = JSON.parse(searchParamsJson);
-    // JSON.parse happily returns null, numbers or arrays; only a plain object
-    // is usable, and anything else must not take down the trip page.
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      stored = parsed as Partial<LinkSearchParams>;
-    }
-  } catch {
-    // Fall through with empty params rather than failing the whole trip page.
-  }
+  const stored = parseStoredSearchParams(searchParamsJson);
   return buildBookingLinks({
     ...stored,
     kind: kind as BookingKind,

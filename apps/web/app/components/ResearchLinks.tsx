@@ -9,7 +9,8 @@ type Link = { provider: string; url: string };
 export function ResearchLinks({ links, subject }: { links?: Link[]; subject: string }) {
   if (!links || links.length === 0) return null;
   return (
-    <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-ink-500">
+    // A span (displayed as flex), not a <p>: this renders inside inline wrappers on the option cards.
+    <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-ink-500">
       <span>See what people say:</span>
       {links.map((link, i) => (
         <span key={link.provider} className="inline-flex items-center gap-1.5">
@@ -26,6 +27,6 @@ export function ResearchLinks({ links, subject }: { links?: Link[]; subject: str
           </a>
         </span>
       ))}
-    </p>
+    </span>
   );
 }

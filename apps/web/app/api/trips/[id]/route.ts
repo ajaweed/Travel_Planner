@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@trip-planner/db";
 import {
+  buildBookingLinks,
   buildResearchLinks,
   destinationFor,
+  destinationsFromBrief,
   getAiBookingReadiness,
   getBudgetStatus,
   getUnreadNotifications,
-  linksForStoredBooking,
+  parseStoredSearchParams,
   reapStalledBookings,
 } from "@trip-planner/core";
+import type { BookingKind } from "@trip-planner/db";
 
 // In AI mode, anything the agent couldn't book (failed, or waiting on the
 // user, e.g. over budget) gets links as a do-it-yourself fallback. Not while
@@ -34,29 +37,62 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: "Trip not found" }, { status: 404 });
   }
 
-  // Booking links are derived at read time from each booking's stored search
-  // params (never stored URLs), so improving the link builder improves every
-  // existing trip without a migration.
-  const destinations: string[] = safeDestinations(trip.briefJson);
-  const itinerary = trip.itinerary.map((day) => ({
-    ...day,
-    activities: day.activities.map((activity) => ({
-      ...activity,
-      // "See what people say" (Google / Reddit) -- deterministic URLs, never
-      // model-written. Bookable rows use the named place + city they stored.
-      research: researchFor(activity, destinations),
-      booking: activity.booking && {
-        ...activity.booking,
-        links:
-          activity.booking.status === "LINK_OUT" ||
-          // Fallback links only on AI-mode trips: legacy (pre-link) rows only
-          // stored a hint, so their links would lack dates and destination.
-          (trip.bookingMode === "AI" && !NO_LINKS.has(activity.booking.status))
-            ? linksForStoredBooking(activity.booking.kind, activity.booking.searchParamsJson)
-            : [],
-      },
-    })),
-  }));
+  // Booking and research links are derived at read time from each booking's
+  // stored search params (never stored URLs), so improving a link builder
+  // improves every existing trip without a migration.
+  const destinations = destinationsFromBrief(trip.briefJson);
+  // Multi-city trips: the agent doesn't tag days with a city, so an activity
+  // that doesn't name one ("Casual dinner at a local tasca") inherits its day's
+  // city -- taken from that day's bookings -- carried forward from earlier days.
+  let carriedCity: string | undefined = destinations.length === 1 ? destinations[0] : undefined;
+
+  const itinerary = trip.itinerary.map((day) => {
+    const stored = new Map(
+      day.activities.flatMap((a) =>
+        a.booking ? [[a.id, parseStoredSearchParams(a.booking.searchParamsJson)] as const] : [],
+      ),
+    );
+    const dayCity =
+      day.activities
+        .map((a) => (a.booking?.kind !== "FLIGHT" ? stored.get(a.id)?.destination : undefined))
+        .find((d): d is string => typeof d === "string") ?? carriedCity;
+    carriedCity = dayCity;
+
+    return {
+      ...day,
+      activities: day.activities.map((activity) => {
+        const params = stored.get(activity.id) ?? {};
+        const candidateName = typeof params.candidateName === "string" ? params.candidateName : undefined;
+        return {
+          ...activity,
+          // "See what people say" (Google / Reddit) -- deterministic URLs, never model-written.
+          research: buildResearchLinks({
+            title: activity.title,
+            candidateName,
+            destination:
+              (typeof params.destination === "string" ? params.destination : undefined) ??
+              destinationFor(destinations, candidateName, activity.title, activity.description ?? undefined) ??
+              dayCity,
+            kind: activity.booking?.kind,
+          }),
+          booking: activity.booking && {
+            ...activity.booking,
+            links:
+              activity.booking.status === "LINK_OUT" ||
+              // Fallback links only on AI-mode trips: legacy (pre-link) rows only
+              // stored a hint, so their links would lack dates and destination.
+              (trip.bookingMode === "AI" && !NO_LINKS.has(activity.booking.status))
+                ? buildBookingLinks({
+                    ...params,
+                    kind: activity.booking.kind as BookingKind,
+                    searchHint: typeof params.searchHint === "string" ? params.searchHint : "",
+                  })
+                : [],
+          },
+        };
+      }),
+    };
+  });
 
   const [budget, unread] = await Promise.all([
     getBudgetStatus(trip.id),
@@ -68,39 +104,5 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     aiBooking: getAiBookingReadiness(),
     budget,
     unreadCount: unread.length,
-  });
-}
-
-function safeDestinations(briefJson: string): string[] {
-  try {
-    const d = JSON.parse(briefJson)?.destinations;
-    return Array.isArray(d) ? d.filter((x: unknown): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function researchFor(
-  activity: { title: string; description: string | null; booking: { kind: string; searchParamsJson: string } | null },
-  destinations: string[],
-) {
-  let stored: { candidateName?: unknown; destination?: unknown } = {};
-  if (activity.booking) {
-    try {
-      const parsed = JSON.parse(activity.booking.searchParamsJson);
-      if (parsed && typeof parsed === "object") stored = parsed;
-    } catch {
-      /* fall back to title + trip destination */
-    }
-  }
-  const candidateName = typeof stored.candidateName === "string" ? stored.candidateName : undefined;
-  const destination =
-    (typeof stored.destination === "string" ? stored.destination : undefined) ??
-    destinationFor(destinations, candidateName, activity.title, activity.description ?? undefined);
-  return buildResearchLinks({
-    title: activity.title,
-    candidateName,
-    destination,
-    kind: activity.booking?.kind,
   });
 }

@@ -511,3 +511,20 @@ for better Reddit matching. Not fetching/scraping either site (terms) -- recorde
 decisions log. 14 new tests (74 total). Note for everyone editing via Python heredocs in
 this environment: a `` in a regex was written to disk as a literal backspace byte and
 silently broke the regex; caught by a test, repo scanned clean for control characters.
+`/code-review` (medium) on `frontend-dev/research-links` raised 10 findings; all fixed:
+- Logistics filter rewritten as specific word-bounded patterns (`isLogistics`): "Check
+  out LX Factory", "Department store…", "Day trip by train to Sintra" keep links;
+  "Hotel check-in", "Taxi transfer to hotel", "Head to the airport", "Train to Porto"
+  lose them. 18 table-driven cases.
+- Option cards search the name they SHOW (reviews provider's resolved name, else the
+  agent's candidate), so links and rating refer to the same place.
+- Blank candidateName/destination fall back instead of suppressing links / dropping the city.
+- Multi-city: activities that name no city inherit their day's city (from that day's
+  bookings, carried forward), instead of a worldwide search.
+- City de-dupe is whole-word and Unicode-aware ("Bathhouse" doesn't contain "Bath").
+- Shared `parseStoredSearchParams()` / `destinationsFromBrief()` in core replace three
+  copies; the trip route parses each booking's params once for both link builders.
+- Options route only touches named HOTEL/TOUR items (no full deep copy).
+- `ResearchLinks` renders a span, not a `<p>` inside a `<span>`.
+85+13 tests, typecheck, build pass; live API re-checked. Merged to `main` and pushed.
+Reviewed by `/code-review`.
