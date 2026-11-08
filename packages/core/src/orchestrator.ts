@@ -11,8 +11,7 @@
 import { prisma } from "@trip-planner/db";
 import { runConciergeAgent } from "./agents/conciergeAgent";
 import { ITINERARY_VARIANTS, runItineraryAgent } from "./agents/itineraryAgent";
-import { runBookingAgent, type BookableItem } from "./agents/bookingAgent";
-import { getBudgetStatus, recordBudgetEntry } from "./agents/budgetAgent";
+import { type LinkSearchParams } from "./bookingLinks";
 import { notify } from "./agents/notificationAgent";
 import { attachRealReviews } from "./reviewLookup";
 import type {
@@ -241,13 +240,15 @@ export async function listItineraryOptions(tripId: string) {
 
 /**
  * Stage 2 of planning: the user picked an option. Materialize it into the real
- * ItineraryDay/Activity/Booking rows and run the same sequential booking loop
- * as before.
+ * ItineraryDay/Activity/Booking rows and hand it back as a plan the user books
+ * themselves. The app does NOT book anything: each bookable item is stored as
+ * a LINK_OUT Booking whose searchParamsJson holds the structured details
+ * bookingLinks.ts turns into provider search links at read time.
  *
- * The CHOOSING -> BOOKING transition is a conditional update used as a lock:
- * two concurrent "choose this plan" clicks would otherwise both materialize
- * the itinerary and double-book every item. Only the update that actually
- * flips the status proceeds.
+ * The CHOOSING -> READY_TO_BOOK transition is a conditional update used as a
+ * lock: two concurrent "choose this plan" clicks would otherwise both
+ * materialize the itinerary (and collide on the unique (tripId, dayIndex)
+ * index). Only the update that actually flips the status proceeds.
  */
 export async function selectItineraryOption(tripId: string, optionId: string): Promise<void> {
   const trip = await prisma.trip.findUniqueOrThrow({ where: { id: tripId } });
@@ -261,28 +262,26 @@ export async function selectItineraryOption(tripId: string, optionId: string): P
 
   const claimed = await prisma.trip.updateMany({
     where: { id: tripId, status: "CHOOSING" },
-    data: { status: "BOOKING" },
+    data: { status: "READY_TO_BOOK" },
   });
   if (claimed.count === 0) {
     throw new OrchestratorError(
       "OPTION_ALREADY_CHOSEN",
-      "A plan has already been chosen for this trip; booking is underway or finished.",
+      "A plan has already been chosen for this trip.",
     );
   }
 
   const brief: TripBrief = JSON.parse(trip.briefJson);
   const draft = JSON.parse(option.draftJson) as StoredItineraryOption;
 
-  let bookableItems: BookableItem[];
+  let itemsToBook: number;
   try {
-    bookableItems = await materializeItinerary(tripId, optionId, brief, draft.days);
+    itemsToBook = await materializeItinerary(tripId, optionId, brief, draft.days);
   } catch (err) {
-    // We already claimed the trip by flipping it to BOOKING. If writing the
-    // plan failed, release the claim so the user gets their options back
-    // instead of a trip stuck in BOOKING with no itinerary forever. Safe
-    // precisely because materializeItinerary is one transaction: either the
-    // whole plan landed or none of it did, so a retry can't collide with
-    // half-written days.
+    // We already claimed the trip. If writing the plan failed, release the
+    // claim so the user gets their options back instead of a trip stuck with
+    // no itinerary. Safe because materializeItinerary is one transaction:
+    // either the whole plan landed or none of it did.
     await prisma.trip.update({ where: { id: tripId }, data: { status: "CHOOSING" } });
     throw err;
   }
@@ -290,18 +289,19 @@ export async function selectItineraryOption(tripId: string, optionId: string): P
   await notify({
     tripId,
     kind: "ITINERARY_READY",
-    message: `"${option.label}" it is. Now booking flights, hotels, and activities.`,
+    message:
+      itemsToBook > 0
+        ? `"${option.label}" it is. Your plan has ${itemsToBook} thing${
+            itemsToBook === 1 ? "" : "s"
+          } to book -- use the links next to each one to book it yourself.`
+        : `"${option.label}" it is. Nothing in this plan needs booking.`,
   });
-
-  await runBookingPipeline(bookableItems);
-  await finalizeTripStatus(tripId);
 }
 
 /**
- * Writes a chosen plan's days/activities/bookings, and marks which option won,
- * all in ONE transaction. This is the persistence half of what used to be
- * planTrip(), unchanged in behaviour -- bookings are created in SEARCHING with
- * a pending idempotency key and handed to the booking loop as BookableItems.
+ * Writes a chosen plan's days/activities/link-out bookings, and marks which
+ * option won, all in ONE transaction. Returns how many items the user has to
+ * book.
  *
  * The option-status writes belong inside this transaction rather than after
  * it: a trip whose days exist but whose option still reads PROPOSED (or vice
@@ -313,8 +313,8 @@ async function materializeItinerary(
   selectedOptionId: string,
   brief: TripBrief,
   days: EnrichedItineraryDayDraft[],
-): Promise<BookableItem[]> {
-  const bookableItems: BookableItem[] = [];
+): Promise<number> {
+  let itemsToBook = 0;
 
   await prisma.$transaction(async (tx) => {
     await tx.itineraryOption.update({
@@ -340,29 +340,30 @@ async function materializeItinerary(
         let bookingId: string | undefined;
 
         if (activity.bookable) {
+          const searchParams: LinkSearchParams = {
+            kind: activity.bookable.kind,
+            searchHint: activity.bookable.searchHint,
+            title: activity.title,
+            candidateName: activity.bookable.candidateName,
+            date: day.date,
+            originCity: brief.originCity,
+            destination: brief.destinations[0],
+            startDate: brief.startDate,
+            endDate: brief.endDate ?? days[days.length - 1]?.date,
+            partySize: brief.partySize,
+          };
           const booking = await tx.booking.create({
             data: {
               tripId,
               kind: activity.bookable.kind,
-              status: "SEARCHING",
-              provider: "", // filled in once BookingAgent resolves a provider
-              idempotencyKey: `pending_${itineraryDay.id}_${order}`,
-              searchParamsJson: JSON.stringify({ searchHint: activity.bookable.searchHint }),
+              status: "LINK_OUT",
+              provider: "user", // booked by the traveller on the provider's own site
+              idempotencyKey: `linkout_${itineraryDay.id}_${order}`,
+              searchParamsJson: JSON.stringify(searchParams),
             },
           });
           bookingId = booking.id;
-          bookableItems.push({
-            bookingId: booking.id,
-            kind: activity.bookable.kind,
-            searchHint: activity.bookable.searchHint,
-            tripContext: {
-              destinations: brief.destinations,
-              originCity: brief.originCity,
-              startDate: brief.startDate,
-              endDate: brief.endDate,
-              partySize: brief.partySize,
-            },
-          });
+          itemsToBook += 1;
         }
 
         await tx.activity.create({
@@ -380,123 +381,5 @@ async function materializeItinerary(
     }
   });
 
-  return bookableItems;
-}
-
-/**
- * Sequential on purpose: each booking's budget check depends on the running
- * total committed/pending from everything booked before it.
- *
- * Each item is isolated: runBookingAgent returns FAILED for business outcomes,
- * but an SDK/network throw from the model call would otherwise abort every
- * remaining booking AND skip finalizeTripStatus, leaving the trip in BOOKING
- * with items stuck on SEARCHING forever. One item blowing up costs that item.
- */
-async function runBookingPipeline(items: BookableItem[]): Promise<void> {
-  for (const item of items) {
-    try {
-      await processBooking(item);
-    } catch (err) {
-      console.error(`processBooking failed for booking ${item.bookingId}:`, err);
-      await markBookingCrashed(item, err);
-    }
-  }
-}
-
-async function markBookingCrashed(item: BookableItem, err: unknown): Promise<void> {
-  const reason =
-    err instanceof Error ? `Unexpected error while booking: ${err.message}` : "Unexpected error while booking.";
-  try {
-    const booking = await prisma.booking.update({
-      where: { id: item.bookingId },
-      data: { status: "FAILED", failureReason: reason },
-    });
-    await notify({
-      tripId: booking.tripId,
-      kind: "BOOKING_FAILED",
-      message: `Couldn't book "${item.searchHint}": ${reason}`,
-    });
-  } catch (nested) {
-    // Nothing left to do but log -- the DB itself is refusing writes.
-    console.error(`Could not record the failure for booking ${item.bookingId}:`, nested);
-  }
-}
-
-async function processBooking(item: BookableItem): Promise<void> {
-  const booking = await prisma.booking.findUniqueOrThrow({ where: { id: item.bookingId } });
-  const budgetStatus = await getBudgetStatus(booking.tripId);
-
-  const outcome = await runBookingAgent(item, budgetStatus);
-
-  if (outcome.status === "BOOKED") {
-    await prisma.booking.update({
-      where: { id: item.bookingId },
-      data: {
-        status: "BOOKED",
-        providerRef: outcome.providerRef,
-        provider: outcome.provider,
-        priceCents: outcome.priceCents,
-        currency: outcome.currency,
-        idempotencyKey: `booking_${item.bookingId}`,
-      },
-    });
-    await recordBudgetEntry({
-      tripId: booking.tripId,
-      label: `${item.kind} booking confirmed`,
-      amountCents: outcome.priceCents,
-      currency: outcome.currency,
-      bookingId: item.bookingId,
-    });
-    await notify({
-      tripId: booking.tripId,
-      kind: "BOOKING_CONFIRMED",
-      message: `Booked: ${item.searchHint} (confirmation ${outcome.providerRef}).`,
-    });
-    return;
-  }
-
-  if (outcome.status === "AWAITING_CONFIRMATION") {
-    await prisma.booking.update({
-      where: { id: item.bookingId },
-      data: {
-        status: "AWAITING_CONFIRMATION",
-        priceCents: outcome.priceCents,
-        currency: outcome.currency,
-      },
-    });
-    await notify({
-      tripId: booking.tripId,
-      kind: "BUDGET_ALERT",
-      message: `A ${item.kind.toLowerCase()} for "${item.searchHint}" would cost ${formatMoney(
-        outcome.priceCents,
-        outcome.currency,
-      )}, which exceeds your remaining budget. Raise your budget or choose a cheaper option to continue.`,
-    });
-    return;
-  }
-
-  await prisma.booking.update({
-    where: { id: item.bookingId },
-    data: { status: "FAILED", failureReason: outcome.reason },
-  });
-  await notify({
-    tripId: booking.tripId,
-    kind: "BOOKING_FAILED",
-    message: `Couldn't book "${item.searchHint}": ${outcome.reason}`,
-  });
-}
-
-async function finalizeTripStatus(tripId: string): Promise<void> {
-  const bookings = await prisma.booking.findMany({ where: { tripId } });
-  const anyNeedsAttention = bookings.some(
-    (b) => b.status === "FAILED" || b.status === "AWAITING_CONFIRMATION",
-  );
-  await prisma.trip.update({
-    where: { id: tripId },
-    data: { status: anyNeedsAttention ? "NEEDS_ATTENTION" : "CONFIRMED" },
-  });
-}
-
-function formatMoney(cents: number, currency: string): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
+  return itemsToBook;
 }

@@ -68,6 +68,7 @@ sequenceDiagram
 
 | Decision | Choice | Why |
 |---|---|---|
+| Who books (2026-11-08) | **The traveller, via links.** The app no longer books anything. | Product owner's call. Choosing a plan materializes it as `LINK_OUT` Booking rows and moves the trip to `READY_TO_BOOK`; no BookingAgent run. Each item's links (Google Flights; Booking.com + Google Hotels; GetYourGuide + Viator; Google Maps for named places) are built at read time by `packages/core/src/bookingLinks.ts` from structured params stored in `Booking.searchParamsJson` -- never model-written URLs, which hallucinate. Plain public search URLs: no keys, no affiliate IDs, no partner approval, no spend. Side effect: the app now works end to end with only an Anthropic key. The flow diagram above still shows the old booking pass; BookingAgent and the provider adapters remain in the repo, unwired. |
 | Flights provider | Amadeus for Developers | Free sandbox, well-documented, same OAuth2 client-credentials flow reusable for hotels. Production flight *booking* needs their separate Enterprise "Flight Create Orders" agreement. |
 | Hotels provider | Amadeus Hotel Booking API (pluggable) | Reuses the Amadeus client for day-one simplicity. `packages/integrations/src/hotels.ts` is written against a `HotelProviderAdapter` interface so swapping to Expedia Rapid API or Booking.com Demand API later is a new adapter + one env var, not a rewrite. |
 | Tours provider | Viator Partner API | Broadest activity inventory with a documented partner program and a real sandbox. |
@@ -109,16 +110,16 @@ Booking.com's partner terms separately require written approval to use AI at all
 
 ## Known gaps (explicitly out of scope for this pass)
 
-- Real user authentication/sessions. Note this got sharper with the options flow:
-  `POST /api/trips/[id]/choose` is the first endpoint that *commits spend*, and like
-  every other route it has no ownership check — anyone with a trip id and an option id
-  can start its bookings. Same pre-auth state as `/api/plan`, bigger blast radius.
+- Real user authentication/sessions. `POST /api/trips/[id]/choose` has no ownership
+  check -- anyone with a trip id and an option id can lock in a plan. Since link-out
+  booking it no longer commits spend, so the blast radius is back to "can change
+  someone's plan", same as every other route.
 - Cancellation/refund flows in the UI (the `refundPayment` adapter exists; nothing
   calls it yet).
 - Streaming/SSE for trip updates — the dashboard currently polls every 4s.
 - `ItineraryOption.estimatedTotalCents` is the *model's* estimate, shown to the user
   explicitly labelled as an estimate. Nothing prices an option against real provider
-  inventory before the user chooses it — the real prices still only arrive during the
-  booking pass, so a chosen option can still turn out to breach budget.
+  inventory, and with link-out booking the app never sees real prices at all -- the
+  traveller sees them on the provider sites. The budget bar says so.
 - Multi-city itineraries beyond a single destination list (the schema supports an
   array of destinations; ItineraryAgent prompting for multi-leg trips needs testing).
