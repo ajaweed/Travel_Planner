@@ -12,6 +12,7 @@
 import type { Tool } from "@anthropic-ai/sdk/resources/messages";
 import { AGENT_MODEL, getClaudeClient } from "../claudeClient";
 import { coerceStringifiedFields } from "./toolInputRepair";
+import { todayISO } from "./tripDates";
 import { ItineraryOptionDraftSchema, type ItineraryOptionDraft, type TripBrief } from "./types";
 
 /**
@@ -187,7 +188,7 @@ export async function runItineraryAgent(
     messages: [
       {
         role: "user",
-        content: `TripBrief:\n${JSON.stringify(brief)}\n\nFraming for this option:\n${variant.framing}`,
+        content: `Today's date: ${todayISO()}\n\nTripBrief:\n${JSON.stringify(brief)}\n\nFraming for this option:\n${variant.framing}`,
       },
     ],
   });
