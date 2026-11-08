@@ -2,10 +2,14 @@
 
 Tell it what kind of trip you want — specific or "I don't know, surprise me" — and a
 pipeline of backend AI agents turns that into a few genuinely different day-by-day
-itineraries to choose between. For the one you pick, it gives you a link for every
-flight, hotel and tour (Google Flights, Booking.com, Google Hotels, GetYourGuide, Viator,
-Google Maps) so you can **book each piece yourself** on the provider's own site. The app
-never books or charges anything.
+itineraries to choose between. When you pick one, you also choose **who books it**:
+
+- **"I'll book it myself"** (default): a link for every flight, hotel and tour (Google
+  Flights, Booking.com, Google Hotels, GetYourGuide, Viator, Google Maps) so you book each
+  piece on the provider's own site. The app books and charges nothing.
+- **"Let the AI book it for me"**: a BookingAgent books each item through provider APIs,
+  checking every real price against your budget first. Anything it can't book comes back
+  to you with the same links.
 
 See `docs/architecture.md` for the full flow diagram, package boundaries, and a decisions
 log of which provider was picked for what and why.
@@ -27,10 +31,11 @@ This is a working scaffold:
   names a specific hotel or tour, its **real** Google rating and review count are shown —
   and where they can't be looked up, it says "no rating available" rather than inventing
   a number.
-- The old app-side booking code (BookingAgent, `bookingTools.ts`, and the Amadeus /
-  Viator / Stripe adapters in `packages/integrations`) is still in the repo but **not
-  wired into any flow**. It's kept in case in-app booking comes back; "Going to
-  production" below only applies if it does.
+- **AI booking runs in sandbox/test mode only.** The Amadeus / Viator / Stripe adapters
+  need keys, and production needs each provider's business approval -- see "Going to
+  production" below. With no keys (this repo's default), every AI booking fails with a
+  clear "provider isn't configured" reason and falls back to links; the UI says this up
+  front on the AI option (`getAiBookingReadiness()` in `packages/core`).
 - There is no real user auth yet — every request currently plans a trip for one demo
   user (see the NOTE in `apps/web/app/api/plan/route.ts`).
 

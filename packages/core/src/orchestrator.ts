@@ -8,10 +8,13 @@
 // the one the user picked and starts booking it. Nothing is ever booked
 // against an option the user didn't choose.
 
-import { prisma } from "@trip-planner/db";
+import { prisma, type BookingMode } from "@trip-planner/db";
 import { runConciergeAgent } from "./agents/conciergeAgent";
 import { ITINERARY_VARIANTS, runItineraryAgent } from "./agents/itineraryAgent";
 import { destinationFor, type LinkSearchParams } from "./bookingLinks";
+import { getAiBookingReadiness } from "./aiBookingReadiness";
+import { runBookingAgent, type BookableItem, type BookingOutcome } from "./agents/bookingAgent";
+import { getBudgetStatus } from "./agents/budgetAgent";
 import { notify } from "./agents/notificationAgent";
 import { attachRealReviews } from "./reviewLookup";
 import type {
@@ -28,7 +31,8 @@ import type {
 export type OrchestratorErrorCode =
   | "OPTION_NOT_FOUND"
   | "OPTION_ALREADY_CHOSEN"
-  | "TRIP_PAST_PLANNING";
+  | "TRIP_PAST_PLANNING"
+  | "AI_BOOKING_UNAVAILABLE";
 
 export class OrchestratorError extends Error {
   constructor(
@@ -239,18 +243,28 @@ export async function listItineraryOptions(tripId: string) {
 }
 
 /**
- * Stage 2 of planning: the user picked an option. Materialize it into the real
- * ItineraryDay/Activity/Booking rows and hand it back as a plan the user books
- * themselves. The app does NOT book anything: each bookable item is stored as
- * a LINK_OUT Booking whose searchParamsJson holds the structured details
- * bookingLinks.ts turns into provider search links at read time.
+ * Stage 2 of planning: the user picked an option and said who books it.
  *
- * The CHOOSING -> READY_TO_BOOK transition is a conditional update used as a
- * lock: two concurrent "choose this plan" clicks would otherwise both
- * materialize the itinerary (and collide on the unique (tripId, dayIndex)
- * index). Only the update that actually flips the status proceeds.
+ * - "SELF": materialize the plan with every bookable as a LINK_OUT Booking and
+ *   move to READY_TO_BOOK. Nothing is booked; the trip page shows provider
+ *   search links (bookingLinks.ts) and the traveller books each item.
+ * - "AI": materialize with bookables in SEARCHING, move to BOOKING, and run the
+ *   BookingAgent over each item (budget-checked, idempotent), then finalize to
+ *   CONFIRMED or NEEDS_ATTENTION. Every non-BOOKED item still gets search links
+ *   on the trip page, so a failed AI booking is never a dead end.
+ *
+ * Both modes store the same structured search params on each Booking, which
+ * is what makes the link fallback work in AI mode.
+ *
+ * The CHOOSING -> (READY_TO_BOOK | BOOKING) transition is a conditional update
+ * used as a lock: two concurrent "choose this plan" clicks would otherwise
+ * both materialize the itinerary and, in AI mode, double-book every item.
  */
-export async function selectItineraryOption(tripId: string, optionId: string): Promise<void> {
+export async function selectItineraryOption(
+  tripId: string,
+  optionId: string,
+  mode: BookingMode = "SELF",
+): Promise<void> {
   const trip = await prisma.trip.findUniqueOrThrow({ where: { id: tripId } });
   const option = await prisma.itineraryOption.findUnique({ where: { id: optionId } });
   if (!option || option.tripId !== tripId) {
@@ -260,9 +274,19 @@ export async function selectItineraryOption(tripId: string, optionId: string): P
     );
   }
 
+  // With no provider credentials at all, every AI booking is a guaranteed
+  // NOT_CONFIGURED failure after several paid model calls per item -- refuse
+  // up front instead of burning API spend on a known outcome.
+  if (mode === "AI" && !getAiBookingReadiness().anyConfigured) {
+    throw new OrchestratorError(
+      "AI_BOOKING_UNAVAILABLE",
+      "AI booking isn't available yet: no booking providers are connected. Choose \"I'll book it myself\" to get booking links.",
+    );
+  }
+
   const claimed = await prisma.trip.updateMany({
     where: { id: tripId, status: "CHOOSING" },
-    data: { status: "READY_TO_BOOK" },
+    data: { status: mode === "AI" ? "BOOKING" : "READY_TO_BOOK", bookingMode: mode },
   });
   if (claimed.count === 0) {
     throw new OrchestratorError(
@@ -274,34 +298,105 @@ export async function selectItineraryOption(tripId: string, optionId: string): P
   const brief: TripBrief = JSON.parse(trip.briefJson);
   const draft = JSON.parse(option.draftJson) as StoredItineraryOption;
 
-  let itemsToBook: number;
+  let bookableItems: BookableItem[];
   try {
-    itemsToBook = await materializeItinerary(tripId, optionId, brief, draft.days);
+    bookableItems = await materializeItinerary(tripId, optionId, brief, draft.days, mode);
   } catch (err) {
     // We already claimed the trip. If writing the plan failed, release the
     // claim so the user gets their options back instead of a trip stuck with
     // no itinerary. Safe because materializeItinerary is one transaction:
     // either the whole plan landed or none of it did.
-    await prisma.trip.update({ where: { id: tripId }, data: { status: "CHOOSING" } });
+    await prisma.trip.update({
+      where: { id: tripId },
+      data: { status: "CHOOSING", bookingMode: "SELF" },
+    });
     throw err;
+  }
+
+  const n = bookableItems.length;
+  const things = `${n} thing${n === 1 ? "" : "s"}`;
+
+  if (mode === "SELF") {
+    await notify({
+      tripId,
+      kind: "ITINERARY_READY",
+      message:
+        n > 0
+          ? `"${option.label}" it is. Your plan has ${things} to book -- use the links next to each one to book it yourself.`
+          : `"${option.label}" it is. Nothing in this plan needs booking.`,
+    });
+    return;
   }
 
   await notify({
     tripId,
     kind: "ITINERARY_READY",
     message:
-      itemsToBook > 0
-        ? `"${option.label}" it is. Your plan has ${itemsToBook} thing${
-            itemsToBook === 1 ? "" : "s"
-          } to book -- use the links next to each one to book it yourself.`
+      n > 0
+        ? `"${option.label}" it is. The AI is now booking ${things} for you.`
         : `"${option.label}" it is. Nothing in this plan needs booking.`,
   });
+  // The booking pass is several model turns per item, run sequentially --
+  // minutes, not milliseconds -- so it must not live inside the HTTP request
+  // (proxy/host timeouts would kill it mid-item). It runs detached on this
+  // long-lived Node server; the trip page polls for progress, and
+  // reapStalledBookings() cleans up if the process dies part-way.
+  // NOTE: on a serverless host this needs a real job queue instead.
+  void runAiBookingPass(tripId, bookableItems);
+}
+
+async function runAiBookingPass(tripId: string, items: BookableItem[]): Promise<void> {
+  try {
+    await runBookingPipeline(items);
+  } catch (err) {
+    console.error(`AI booking pass crashed for trip ${tripId}:`, err);
+  }
+  try {
+    await finalizeTripStatus(tripId);
+  } catch (err) {
+    // Leaves the trip in BOOKING; reapStalledBookings() will finalize it.
+    console.error(`Could not finalize trip ${tripId}:`, err);
+  }
+}
+
+/** How long a BOOKING trip can go without any booking-row progress. */
+const STALL_MS = 15 * 60 * 1000;
+
+/**
+ * If an AI booking pass died part-way (server restart, crash), the trip would
+ * sit in BOOKING with SEARCHING rows forever -- and SEARCHING rows get no
+ * fallback links. Called on trip reads: once nothing has moved for STALL_MS,
+ * mark the leftover rows FAILED (which gives them links) and finalize.
+ * Each item touches its row when it starts, so a long single item still
+ * counts as progress.
+ */
+export async function reapStalledBookings(tripId: string, now: Date = new Date()): Promise<void> {
+  const trip = await prisma.trip.findUnique({ where: { id: tripId } });
+  if (!trip || trip.status !== "BOOKING" || trip.bookingMode !== "AI") return;
+
+  const latest = await prisma.booking.findFirst({
+    where: { tripId },
+    orderBy: { updatedAt: "desc" },
+    select: { updatedAt: true },
+  });
+  const lastProgress = latest?.updatedAt ?? trip.updatedAt;
+  if (now.getTime() - lastProgress.getTime() < STALL_MS) return;
+
+  await prisma.booking.updateMany({
+    where: { tripId, status: "SEARCHING" },
+    data: {
+      status: "FAILED",
+      failureReason:
+        "Booking was interrupted before this item finished. It may not have been booked -- check your email for a confirmation before booking it yourself.",
+    },
+  });
+  await finalizeTripStatus(tripId);
 }
 
 /**
- * Writes a chosen plan's days/activities/link-out bookings, and marks which
- * option won, all in ONE transaction. Returns how many items the user has to
- * book.
+ * Writes a chosen plan's days/activities/bookings, and marks which option won,
+ * all in ONE transaction. Returns the bookable items (for the AI booking loop;
+ * SELF mode only uses the count).
  *
  * The option-status writes belong inside this transaction rather than after
  * it: a trip whose days exist but whose option still reads PROPOSED (or vice
@@ -313,8 +408,9 @@ async function materializeItinerary(
   selectedOptionId: string,
   brief: TripBrief,
   days: EnrichedItineraryDayDraft[],
-): Promise<number> {
-  let itemsToBook = 0;
+  mode: BookingMode,
+): Promise<BookableItem[]> {
+  const bookableItems: BookableItem[] = [];
   const isoDate = (s: string | undefined) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined);
   // The brief's dates are concierge output and normally ISO; the day dates
   // are what the itinerary actually uses, so fall back to them per field.
@@ -369,14 +465,33 @@ async function materializeItinerary(
             data: {
               tripId,
               kind: activity.bookable.kind,
-              status: "LINK_OUT",
-              provider: "user", // booked by the traveller on the provider's own site
-              idempotencyKey: `linkout_${itineraryDay.id}_${order}`,
+              ...(mode === "AI"
+                ? {
+                    status: "SEARCHING",
+                    provider: "", // filled in once BookingAgent resolves a provider
+                    idempotencyKey: `pending_${itineraryDay.id}_${order}`,
+                  }
+                : {
+                    status: "LINK_OUT",
+                    provider: "user", // booked by the traveller on the provider's own site
+                    idempotencyKey: `linkout_${itineraryDay.id}_${order}`,
+                  }),
               searchParamsJson: JSON.stringify(searchParams),
             },
           });
           bookingId = booking.id;
-          itemsToBook += 1;
+          bookableItems.push({
+            bookingId: booking.id,
+            kind: activity.bookable.kind,
+            searchHint: activity.bookable.searchHint,
+            tripContext: {
+              destinations: brief.destinations,
+              originCity: brief.originCity,
+              startDate: tripStart,
+              endDate: tripEnd,
+              partySize: brief.partySize,
+            },
+          });
         }
 
         await tx.activity.create({
@@ -394,5 +509,194 @@ async function materializeItinerary(
     }
   });
 
-  return itemsToBook;
+  return bookableItems;
+}
+
+/**
+ * Sequential on purpose: each booking's budget check depends on the running
+ * total committed/pending from everything booked before it.
+ *
+ * Each item is isolated: runBookingAgent returns FAILED for business outcomes,
+ * but an SDK/network throw from the model call would otherwise abort every
+ * remaining booking AND skip finalizeTripStatus, leaving the trip in BOOKING
+ * with items stuck on SEARCHING forever. One item blowing up costs that item.
+ */
+async function runBookingPipeline(items: BookableItem[]): Promise<void> {
+  for (const item of items) {
+    try {
+      await processBooking(item);
+    } catch (err) {
+      console.error(`processBooking failed for booking ${item.bookingId}:`, err);
+      await markBookingCrashed(item, err);
+    }
+  }
+}
+
+/**
+ * Thrown when the provider confirmed a booking but we then failed to record
+ * it. The money is spent: this must never be turned into FAILED, which would
+ * offer the user links to book (and pay for) the same thing again.
+ */
+class BookedButUnrecordedError extends Error {
+  constructor(
+    readonly outcome: Extract<BookingOutcome, { status: "BOOKED" }>,
+    cause: unknown,
+  ) {
+    super(`Provider booked ${outcome.providerRef} but recording it failed: ${String(cause)}`);
+  }
+}
+
+async function markBookingCrashed(item: BookableItem, err: unknown): Promise<void> {
+  if (err instanceof BookedButUnrecordedError) {
+    // One more attempt at the essential fact: it IS booked, with this ref.
+    // AWAITING_CONFIRMATION (no links) + an explicit reason if even that
+    // fails is handled by the outer catch's log -- never FAILED.
+    try {
+      await prisma.booking.update({
+        where: { id: item.bookingId },
+        data: {
+          status: "BOOKED",
+          providerRef: err.outcome.providerRef,
+          provider: err.outcome.provider,
+          priceCents: err.outcome.priceCents,
+          currency: err.outcome.currency,
+        },
+      });
+    } catch (nested) {
+      console.error(
+        `CRITICAL: booking ${item.bookingId} was booked with provider (ref ${err.outcome.providerRef}) but could not be recorded:`,
+        nested,
+      );
+    }
+    return;
+  }
+
+  const reason =
+    err instanceof Error ? `Unexpected error while booking: ${err.message}` : "Unexpected error while booking.";
+  try {
+    // Re-read first: if the row already says BOOKED, the failure came after
+    // the money moved (e.g. a notification write) and must not erase that.
+    const current = await prisma.booking.findUnique({ where: { id: item.bookingId } });
+    if (!current || current.status === "BOOKED") return;
+    const booking = await prisma.booking.update({
+      where: { id: item.bookingId },
+      data: { status: "FAILED", failureReason: reason },
+    });
+    await notify({
+      tripId: booking.tripId,
+      kind: "BOOKING_FAILED",
+      message: `Couldn't book "${item.searchHint}": ${reason}`,
+    });
+  } catch (nested) {
+    // Nothing left to do but log -- the DB itself is refusing writes.
+    console.error(`Could not record the failure for booking ${item.bookingId}:`, nested);
+  }
+}
+
+async function processBooking(item: BookableItem): Promise<void> {
+  // Touch the row as this item starts: it's the progress signal
+  // reapStalledBookings() watches.
+  const booking = await prisma.booking.update({
+    where: { id: item.bookingId },
+    data: { status: "SEARCHING" },
+  });
+  const budgetStatus = await getBudgetStatus(booking.tripId);
+
+  const outcome = await runBookingAgent(item, budgetStatus);
+
+  if (outcome.status === "BOOKED") {
+    // The provider has already taken the money. Status + budget entry are
+    // written atomically; if that fails it's reported as booked-but-
+    // unrecorded, never as a failure (see BookedButUnrecordedError).
+    try {
+      await recordBookedOutcome(booking.tripId, item, outcome);
+    } catch (err) {
+      throw new BookedButUnrecordedError(outcome, err);
+    }
+    // Best effort: a lost notification must not touch the booking itself.
+    await notify({
+      tripId: booking.tripId,
+      kind: "BOOKING_CONFIRMED",
+      message: `Booked: ${item.searchHint} (confirmation ${outcome.providerRef}).`,
+    }).catch((err) => console.error(`notify failed for booking ${item.bookingId}:`, err));
+    return;
+  }
+
+  if (outcome.status === "AWAITING_CONFIRMATION") {
+    await prisma.booking.update({
+      where: { id: item.bookingId },
+      data: {
+        status: "AWAITING_CONFIRMATION",
+        priceCents: outcome.priceCents,
+        currency: outcome.currency,
+      },
+    });
+    await notify({
+      tripId: booking.tripId,
+      kind: "BUDGET_ALERT",
+      message: `A ${item.kind.toLowerCase()} for "${item.searchHint}" would cost ${formatMoney(
+        outcome.priceCents,
+        outcome.currency,
+      )}, which is more than your remaining budget, so the AI didn't book it. You can book it yourself with the links on your trip page.`,
+    });
+    return;
+  }
+
+  await prisma.booking.update({
+    where: { id: item.bookingId },
+    data: { status: "FAILED", failureReason: outcome.reason },
+  });
+  await notify({
+    tripId: booking.tripId,
+    kind: "BOOKING_FAILED",
+    message: `Couldn't book "${item.searchHint}": ${outcome.reason}`,
+  });
+}
+
+async function finalizeTripStatus(tripId: string): Promise<void> {
+  const bookings = await prisma.booking.findMany({ where: { tripId } });
+  const anyNeedsAttention = bookings.some(
+    (b) => b.status === "FAILED" || b.status === "AWAITING_CONFIRMATION",
+  );
+  await prisma.trip.update({
+    where: { id: tripId },
+    data: { status: anyNeedsAttention ? "NEEDS_ATTENTION" : "CONFIRMED" },
+  });
+}
+
+async function recordBookedOutcome(
+  tripId: string,
+  item: BookableItem,
+  outcome: Extract<BookingOutcome, { status: "BOOKED" }>,
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.booking.update({
+      where: { id: item.bookingId },
+      data: {
+        status: "BOOKED",
+        providerRef: outcome.providerRef,
+        provider: outcome.provider,
+        priceCents: outcome.priceCents,
+        currency: outcome.currency,
+        idempotencyKey: `booking_${item.bookingId}`,
+      },
+    }),
+    prisma.budgetEntry.create({
+      data: {
+        tripId,
+        label: `${item.kind} booking confirmed`,
+        amountCents: outcome.priceCents,
+        currency: outcome.currency,
+        bookingId: item.bookingId,
+      },
+    }),
+    prisma.trip.update({
+      where: { id: tripId },
+      data: { budgetSpentCents: { increment: outcome.priceCents } },
+    }),
+  ]);
+}
+
+function formatMoney(cents: number, currency: string): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
 }

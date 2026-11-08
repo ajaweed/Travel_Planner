@@ -68,7 +68,8 @@ sequenceDiagram
 
 | Decision | Choice | Why |
 |---|---|---|
-| Who books (2026-11-08) | **The traveller, via links.** The app no longer books anything. | Product owner's call. Choosing a plan materializes it as `LINK_OUT` Booking rows and moves the trip to `READY_TO_BOOK`; no BookingAgent run. Each item's links (Google Flights; Booking.com + Google Hotels; GetYourGuide + Viator; Google Maps for named places) are built at read time by `packages/core/src/bookingLinks.ts` from structured params stored in `Booking.searchParamsJson` -- never model-written URLs, which hallucinate. Plain public search URLs: no keys, no affiliate IDs, no partner approval, no spend. Side effect: the app now works end to end with only an Anthropic key. The flow diagram above still shows the old booking pass; BookingAgent and the provider adapters remain in the repo, unwired. |
+| Booking mode choice (2026-11-08, later the same day) | **The user chooses per trip: SELF (links) or AI (BookingAgent).** Default SELF. | Product owner wants both. Stored as `Trip.bookingMode` (migration `add_trip_booking_mode`), picked with the plan via `POST /api/trips/[id]/choose { bookingMode }`; anything other than `"AI"` means SELF, so a missing field can never opt someone into spending. AI: `CHOOSING -> BOOKING`, the restored sequential BookingAgent pipeline, then `CONFIRMED`/`NEEDS_ATTENTION`. Both modes store the same structured search params on every Booking, so in AI mode any FAILED / AWAITING_CONFIRMATION item gets "book it yourself instead" links. **No links while SEARCHING** -- offering them mid-booking invites the user and the agent to book the same thing twice. `getAiBookingReadiness()` (env-only, no network) tells the UI whether AI booking is unconfigured / test / live so the AI option carries an honest caveat. |
+| Who books (2026-11-08) | *Superseded by the row above.* **The traveller, via links.** The app no longer books anything. | Product owner's call. Choosing a plan materializes it as `LINK_OUT` Booking rows and moves the trip to `READY_TO_BOOK`; no BookingAgent run. Each item's links (Google Flights; Booking.com + Google Hotels; GetYourGuide + Viator; Google Maps for named places) are built at read time by `packages/core/src/bookingLinks.ts` from structured params stored in `Booking.searchParamsJson` -- never model-written URLs, which hallucinate. Plain public search URLs: no keys, no affiliate IDs, no partner approval, no spend. Side effect: the app now works end to end with only an Anthropic key. The flow diagram above still shows the old booking pass; BookingAgent and the provider adapters remain in the repo, unwired. |
 | Flights provider | Amadeus for Developers | Free sandbox, well-documented, same OAuth2 client-credentials flow reusable for hotels. Production flight *booking* needs their separate Enterprise "Flight Create Orders" agreement. |
 | Hotels provider | Amadeus Hotel Booking API (pluggable) | Reuses the Amadeus client for day-one simplicity. `packages/integrations/src/hotels.ts` is written against a `HotelProviderAdapter` interface so swapping to Expedia Rapid API or Booking.com Demand API later is a new adapter + one env var, not a rewrite. |
 | Tours provider | Viator Partner API | Broadest activity inventory with a documented partner program and a real sandbox. |
@@ -111,15 +112,20 @@ Booking.com's partner terms separately require written approval to use AI at all
 ## Known gaps (explicitly out of scope for this pass)
 
 - Real user authentication/sessions. `POST /api/trips/[id]/choose` has no ownership
-  check -- anyone with a trip id and an option id can lock in a plan. Since link-out
-  booking it no longer commits spend, so the blast radius is back to "can change
-  someone's plan", same as every other route.
+  check -- anyone with a trip id and an option id can lock in a plan, and **with
+  `bookingMode: "AI"` that starts real spending** once providers are live. Must be fixed
+  together with auth, and before any provider leaves sandbox.
+- Payment-method collection for live AI booking is not designed or built (ux-designer
+  flagged it). The AI option must not be offered as "live" until it is.
+- No "I booked this myself, stop" control for AI-mode items, and no approve/skip actions
+  for AWAITING_CONFIRMATION items yet -- the user's recourse is the fallback links.
 - Cancellation/refund flows in the UI (the `refundPayment` adapter exists; nothing
   calls it yet).
 - Streaming/SSE for trip updates — the dashboard currently polls every 4s.
 - `ItineraryOption.estimatedTotalCents` is the *model's* estimate, shown to the user
   explicitly labelled as an estimate. Nothing prices an option against real provider
-  inventory, and with link-out booking the app never sees real prices at all -- the
-  traveller sees them on the provider sites. The budget bar says so.
+  inventory. In SELF mode the app never sees real prices (the traveller sees them on the
+  provider sites, and the budget bar says so); in AI mode real prices arrive only during
+  the booking pass, so a chosen option can still turn out to breach budget.
 - Multi-city itineraries beyond a single destination list (the schema supports an
   array of destinations; ItineraryAgent prompting for multi-leg trips needs testing).

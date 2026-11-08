@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BudgetBar } from "../../components/BudgetBar";
 import { ItineraryOptions, type ItineraryOption } from "../../components/ItineraryOptions";
 import { BookingLinks } from "../../components/BookingLinks";
+import { BookingModePicker, type BookingMode } from "../../components/BookingModePicker";
 import { StatusPill } from "../../components/StatusPill";
 
 type TripData = any; // the API route returns Prisma's shape directly; tighten with a shared type once it stabilizes.
@@ -19,6 +20,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [optionsReload, setOptionsReload] = useState(0);
   const [alreadyChosen, setAlreadyChosen] = useState(false);
+  const [bookingMode, setBookingMode] = useState<BookingMode>("SELF");
 
   const tripStatus: string | undefined = data?.trip?.status;
 
@@ -105,7 +107,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
         const res = await fetch(`/api/trips/${params.id}/choose`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ optionId }),
+          body: JSON.stringify({ optionId, bookingMode }),
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -117,15 +119,20 @@ export default function TripPage({ params }: { params: { id: string } }) {
             setChoosingId(null);
           }
         }
-        // On success the trip poll takes over: status is READY_TO_BOOK and
-        // the itinerary appears with booking links.
+        // On success the trip poll takes over: READY_TO_BOOK with links
+        // (SELF), or BOOKING with per-item progress (AI).
       } catch {
-        // A network drop doesn't mean the choice failed server-side. The trip
-        // poll is the source of truth; leave the cards locked.
-        setChooseError("Still saving your plan — this page updates on its own.");
+        // In AI mode the request can outlive a proxy timeout while booking
+        // carries on server-side, so this must NOT claim anything failed. The
+        // trip poll is the source of truth; leave the cards locked.
+        setChooseError(
+          bookingMode === "AI"
+            ? "Still working on this — bookings can take a few minutes. This page updates on its own."
+            : "Still saving your plan — this page updates on its own.",
+        );
       }
     },
-    [params.id],
+    [params.id, bookingMode],
   );
 
   if (error) {
@@ -159,6 +166,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
   const settingUp =
     (trip.status === "READY_TO_BOOK" || trip.status === "BOOKING") && trip.itinerary.length === 0;
   const readyToBook = trip.status === "READY_TO_BOOK" && trip.itinerary.length > 0;
+  const aiMode = trip.bookingMode === "AI";
   const hasLinks = trip.itinerary.some((day: any) =>
     day.activities.some((a: any) => a.booking?.status === "LINK_OUT"),
   );
@@ -252,13 +260,22 @@ export default function TripPage({ params }: { params: { id: string } }) {
             No itinerary options are available for this trip yet.
           </p>
         ) : (
+          <>
+          <BookingModePicker
+            value={bookingMode}
+            onChange={setBookingMode}
+            readiness={data.aiBooking}
+            disabled={choosingId !== null}
+          />
           <ItineraryOptions
+            bookingMode={bookingMode}
             options={options}
             onChoose={chooseOption}
             choosingId={choosingId}
             disabled={choosingId !== null}
             error={chooseError}
           />
+          </>
         ))}
 
       {settingUp && (
@@ -283,8 +300,9 @@ export default function TripPage({ params }: { params: { id: string } }) {
       )}
       {trip.status === "BOOKING" && trip.itinerary.length > 0 && (
         <p className="mt-6 text-sm text-neutral-400">
-          This trip was planned before the app switched to booking links, so it has no
-          links. Plan a new trip to get them.
+          {aiMode
+            ? "Plan locked in — the AI is booking your flights, hotel, and activities…"
+            : "This trip was planned before the app switched to booking links, so it has no links. Plan a new trip to get them."}
         </p>
       )}
 
@@ -309,7 +327,24 @@ export default function TripPage({ params }: { params: { id: string } }) {
                     {activity.booking?.status === "LINK_OUT" ? (
                       <BookingLinks links={activity.booking.links ?? []} title={activity.title} />
                     ) : (
-                      activity.booking && <StatusPill status={activity.booking.status} />
+                      activity.booking && (
+                        <div className="flex shrink-0 flex-col items-end gap-1.5">
+                          <StatusPill status={activity.booking.status} />
+                          {activity.booking.failureReason && (
+                            <p className="max-w-xs text-right text-xs text-neutral-500">
+                              {activity.booking.failureReason}
+                            </p>
+                          )}
+                          {/* AI mode: anything not booked keeps a do-it-yourself fallback. */}
+                          {(activity.booking.links?.length ?? 0) > 0 && (
+                            <BookingLinks
+                              links={activity.booking.links}
+                              title={activity.title}
+                              label="Book it yourself instead:"
+                            />
+                          )}
+                        </div>
+                      )
                     )}
                   </li>
                 ))}

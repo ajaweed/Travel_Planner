@@ -8,6 +8,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   OPTION_NOT_FOUND: 404,
   OPTION_ALREADY_CHOSEN: 409,
   TRIP_PAST_PLANNING: 409,
+  AI_BOOKING_UNAVAILABLE: 409,
 };
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -19,11 +20,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
+  // Default to SELF: an absent or unrecognised mode must never opt someone
+  // into the AI spending their money.
+  const mode = body.bookingMode === "AI" ? "AI" : "SELF";
+
   try {
-    // Locks in the plan (CHOOSING -> READY_TO_BOOK) and writes its days and
-    // link-out bookings. Nothing is booked: the user books each item via the
-    // links on the trip page. Fast -- no agent calls happen here.
-    await selectItineraryOption(params.id, body.optionId);
+    // SELF: locks in the plan (-> READY_TO_BOOK) with link-out bookings.
+    // AI: locks in the plan (-> BOOKING) and starts the booking pass in the
+    // background; the dashboard's poll shows per-item progress. Both return
+    // as soon as the plan is written.
+    await selectItineraryOption(params.id, body.optionId, mode);
     return NextResponse.json({ ok: true });
   } catch (err) {
     if (err instanceof OrchestratorError) {
