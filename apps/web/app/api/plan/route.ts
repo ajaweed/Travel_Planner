@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@trip-planner/db";
-import { DietarySchema, startTrip } from "@trip-planner/core";
+import { DietarySchema, OutdoorNeedsSchema, startTrip } from "@trip-planner/core";
 
 // NOTE: no real auth wired up yet (out of scope for this pass -- see
 // docs/architecture.md). Every request plans a trip for a single demo user
@@ -32,9 +32,19 @@ export async function POST(req: NextRequest) {
     dietary = parsed.data;
   }
 
+  // Optional fitness/access needs for outdoor activities, same handling.
+  let outdoors;
+  if (body.outdoors !== undefined) {
+    const parsed = OutdoorNeedsSchema.safeParse(body.outdoors);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid 'outdoors' in request body." }, { status: 400 });
+    }
+    outdoors = parsed.data;
+  }
+
   try {
     const user = await getOrCreateDemoUser();
-    const result = await startTrip(user.id, body.prompt, dietary);
+    const result = await startTrip(user.id, body.prompt, dietary, outdoors);
     return NextResponse.json({
       tripId: result.trip.id,
       needsClarification: result.needsClarification,

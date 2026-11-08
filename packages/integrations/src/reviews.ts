@@ -129,12 +129,13 @@ const RESTAURANT_FIELD_MASK = [
 const NEAR_RADIUS_M = 30_000;
 
 /**
- * Google's best candidates for a named restaurant in a city (up to 3), raw.
+ * Google's best candidates for a named place (restaurant, park, trailhead...)
+ * in a city (up to 3), raw.
  * Deciding whether one of them really IS the named place is the caller's job
  * (packages/core/src/restaurantChecks.ts): Text Search always returns its
  * nearest guess, which for a made-up name is some other restaurant.
  */
-export async function findRestaurant(
+export async function findPlace(
   params: RestaurantSearchParams,
 ): Promise<ProviderResult<RestaurantPlace[]>> {
   const key = apiKey();

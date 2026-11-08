@@ -694,3 +694,11 @@ added a Google Places key and asked to verify the restaurants the AI recommends.
 The Rome test trip's stored checks were re-keyed in dev.db after the key format change (test
 data on this branch only). Tests: 251 core + 16 integrations; typecheck and build pass.
 Merged to `main` and pushed. Reviewed by `/code-review`.
+
+**2026-11-08 -- backend-dev** -- START `backend-dev/outdoors`: product owner asked for "the
+same for hikes and nature excursions" as was done for food. Part 1 of 2 (weather is part 2):
+fitness/access needs on the brief (from the prompt plus landing-page choices, merged in code);
+the itinerary agent adds `outdoor` details to hikes and nature stops (difficulty, distance,
+elevation, duration, permits, seasonal and safety notes); deterministic checks against the
+needs and against the stated numbers; trailheads/parks verified on Google Places (the
+restaurant checker, generalised); trail lengths from OpenStreetMap via Waymarked Trails.

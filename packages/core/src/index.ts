@@ -37,3 +37,13 @@ export { activityConflicts, diningView, localFoodView, planFood } from "./food";
 export type { DiningView, LocalFoodView, PlanFood } from "./food";
 export type { DiningDraft, LocalFood } from "./agents/types";
 export type { RestaurantCheck, RestaurantLookupStatus } from "./restaurantChecks";
+export {
+  OutdoorNeedsSchema,
+  impliedDifficulty,
+  mergeOutdoorNeeds,
+  outdoorFlags,
+  outdoorNeedLabels,
+  outdoorNeedsFromBrief,
+} from "./outdoors";
+export type { AccessTag, Difficulty, OutdoorNeeds } from "./outdoors";
+export type { OutdoorDraft } from "./agents/types";

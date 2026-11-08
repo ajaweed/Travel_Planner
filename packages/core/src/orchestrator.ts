@@ -19,6 +19,7 @@ import { notify } from "./agents/notificationAgent";
 import { attachRealReviews } from "./reviewLookup";
 import { checkRestaurants } from "./restaurantChecks";
 import { dietaryFromBrief, mergeDietary, type Dietary } from "./dietary";
+import { mergeOutdoorNeeds, outdoorNeedsFromBrief, type OutdoorNeeds } from "./outdoors";
 import type {
   EnrichedItineraryDayDraft,
   StoredItineraryOption,
@@ -51,11 +52,20 @@ export class OrchestratorError extends Error {
  *   the brief in code -- never left to the model to extract -- and carried
  *   through a clarification round in the stored partial brief.
  */
-export async function startTrip(userId: string, rawPrompt: string, dietary?: Partial<Dietary>) {
+export async function startTrip(
+  userId: string,
+  rawPrompt: string,
+  dietary?: Partial<Dietary>,
+  outdoors?: Partial<OutdoorNeeds>,
+) {
   const result = await runConciergeAgent(rawPrompt);
 
   if (result.status === "needs_clarification") {
-    const partialBrief = { ...result.partialBrief, dietary: mergeDietary(result.partialBrief.dietary, dietary) };
+    const partialBrief = {
+      ...result.partialBrief,
+      dietary: mergeDietary(result.partialBrief.dietary, dietary),
+      outdoors: mergeOutdoorNeeds(result.partialBrief.outdoors, outdoors),
+    };
     const trip = await prisma.trip.create({
       data: {
         userId,
@@ -70,7 +80,11 @@ export async function startTrip(userId: string, rawPrompt: string, dietary?: Par
     return { trip, needsClarification: true as const, question: result.question };
   }
 
-  const brief = { ...result.brief, dietary: mergeDietary(result.brief.dietary, dietary) };
+  const brief = {
+    ...result.brief,
+    dietary: mergeDietary(result.brief.dietary, dietary),
+    outdoors: mergeOutdoorNeeds(result.brief.outdoors, outdoors),
+  };
   const trip = await createTripFromBrief(userId, rawPrompt, brief);
   await generateItineraryOptions(trip.id);
   return { trip, needsClarification: false as const };
@@ -99,9 +113,14 @@ export async function answerClarification(tripId: string, userReply: string) {
   // Dietary needs from earlier turns (incl. landing-page ticks) must survive
   // however the model restates the brief.
   const earlierDietary = dietaryFromBrief(trip.briefJson);
+  const earlierOutdoors = outdoorNeedsFromBrief(trip.briefJson);
 
   if (result.status === "needs_clarification") {
-    const partialBrief = { ...result.partialBrief, dietary: mergeDietary(result.partialBrief.dietary, earlierDietary) };
+    const partialBrief = {
+      ...result.partialBrief,
+      dietary: mergeDietary(result.partialBrief.dietary, earlierDietary),
+      outdoors: mergeOutdoorNeeds(result.partialBrief.outdoors, earlierOutdoors),
+    };
     await prisma.trip.update({
       where: { id: tripId },
       data: { briefJson: JSON.stringify(partialBrief) },
@@ -110,7 +129,11 @@ export async function answerClarification(tripId: string, userReply: string) {
     return { needsClarification: true as const, question: result.question };
   }
 
-  const brief = { ...result.brief, dietary: mergeDietary(result.brief.dietary, earlierDietary) };
+  const brief = {
+    ...result.brief,
+    dietary: mergeDietary(result.brief.dietary, earlierDietary),
+    outdoors: mergeOutdoorNeeds(result.brief.outdoors, earlierOutdoors),
+  };
   await prisma.trip.update({
     where: { id: tripId },
     data: {

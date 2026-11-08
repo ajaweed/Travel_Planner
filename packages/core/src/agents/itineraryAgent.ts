@@ -118,6 +118,41 @@ const tools: Tool[] = [
                       },
                       required: ["meal"],
                     },
+                    outdoor: {
+                      type: "object",
+                      description:
+                        "Set on hikes, walks in nature, parks, beaches, water and wildlife outings (not city sightseeing). Display and checking only.",
+                      properties: {
+                        type: { type: "string", enum: ["hike", "walk", "nature", "beach", "water", "wildlife", "viewpoint"] },
+                        difficulty: {
+                          type: "string",
+                          enum: ["easy", "moderate", "hard"],
+                          description:
+                            "Honest rating. easy: <= ~8 km and <= ~300 m of climbing on good paths; moderate: up to ~15 km or ~800 m; hard: beyond that, or exposed/rough terrain.",
+                        },
+                        distanceKm: { type: "number", description: "Walking distance of the outing, if it's a walk/hike." },
+                        elevationGainM: { type: "number", description: "Total climbing in metres, if known." },
+                        durationHours: { type: "number" },
+                        placeName: {
+                          type: "string",
+                          description:
+                            "The real trailhead, park, beach or reserve as named on Google Maps (e.g. 'Sintra-Cascais Natural Park', 'Praia da Ursa'). Omit if not confident it exists.",
+                        },
+                        trailName: {
+                          type: "string",
+                          description:
+                            "Only for a named, waymarked route as it is officially called (e.g. 'Trilho dos Pescadores'). Omit for informal walks.",
+                        },
+                        permit: { type: "string", description: "Any permit, timed-entry ticket or reservation needed, and how far ahead." },
+                        seasonalNote: { type: "string", description: "Closures, heat, snow, tides, daylight, or crowds for the trip's dates." },
+                        safetyNote: { type: "string", description: "Water, shade, footwear, exposure, cliffs, currents, wildlife -- whatever matters here." },
+                        accessNote: {
+                          type: "string",
+                          description: "REQUIRED when the brief has outdoor needs: how this fits them (e.g. 'Flat, paved first 2 km; turn back at the lighthouse').",
+                        },
+                      },
+                      required: ["type"],
+                    },
                     bookable: {
                       type: "object",
                       description:
@@ -213,6 +248,17 @@ Rules:
   level matched to your framing (value = cheap local spots and markets; elevated = one or
   two standout restaurants). Favour places locals rate over tourist traps. Also fill
   localFoods with 4-8 things this destination is known for.
+- OUTDOORS: when the brief's interests or the destination suit it, include hikes, nature walks,
+  parks, beaches or wildlife outings, each with an 'outdoor' block. Rate difficulty honestly
+  from distance and climbing (never call a 12 km, 900 m hike "easy"), name the real
+  trailhead/park (placeName) and the official route name (trailName) only when confident, and
+  give practical notes: permits or timed entry (popular parks often need booking weeks
+  ahead), seasonal conditions for the trip's dates, and safety (water, heat, cliffs,
+  currents, footwear).
+- OUTDOOR NEEDS (brief.outdoors) ARE HARD CONSTRAINTS: never exceed maxDifficulty; with
+  limited_mobility or wheelchair, choose flat, paved or step-free options and say so in
+  accessNote (scenic drives, boardwalks, viewpoints by car); with young_kids, keep outings
+  short and safe. Follow notes (e.g. "afraid of heights": no exposed ridges).
 - DIETARY NEEDS (brief.dietary) ARE HARD CONSTRAINTS, for every meal, dish, food tour and
   drinks stop:
   * halal: no pork or alcohol-centred activities (no wine/port tastings, bar crawls);
