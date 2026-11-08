@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RestaurantPlace } from "@trip-planner/integrations";
-import { checkRestaurants, inCity, nameMatches, restaurantKey, MAX_RESTAURANT_CHECKS_PER_GENERATION } from "./restaurantChecks";
+import {
+  checkRestaurants,
+  inCity,
+  isGoogleMapsUrl,
+  nameMatches,
+  restaurantKey,
+  MAX_RESTAURANT_CHECKS_PER_GENERATION,
+} from "./restaurantChecks";
 import { resetDestinationPhotoCache } from "./destinationPhoto";
 import { setWikimediaFetch } from "./wikimedia";
 import { diningView } from "./food";
@@ -38,6 +45,29 @@ describe("nameMatches", () => {
     ["Café Central", "Café Nicola"],
   ])("%s does not match Google's %s", (req, got) => {
     expect(nameMatches(req, got, "Lisbon")).toBe(false);
+  });
+});
+
+describe("review fixes", () => {
+  it("a name made only of generic words can't be 'verified' by a different place", () => {
+    expect(nameMatches("The Italian Restaurant", "Da Mario Italian Restaurant", "Rome")).toBe(false);
+    expect(nameMatches("Rome Kitchen", "Trastevere Rome Kitchen", "Rome")).toBe(false);
+    expect(nameMatches("Café Central", "Café Central", "Vienna")).toBe(true);
+  });
+
+  it("restaurantKey keeps every word: different places, different keys", () => {
+    expect(restaurantKey("Bar 1")).not.toBe(restaurantKey("Bar 2"));
+    expect(restaurantKey("A Cevicheria")).not.toBe(restaurantKey("O Cevicheria"));
+    expect(restaurantKey("Yu")).toBe("yu");
+    expect(restaurantKey("Palácio  Chiado!")).toBe(restaurantKey("palacio chiado"));
+  });
+
+  it("only Google's own Maps URLs", () => {
+    expect(isGoogleMapsUrl("https://maps.google.com/?cid=1")).toBe(true);
+    expect(isGoogleMapsUrl("https://google.com/maps")).toBe(true);
+    expect(isGoogleMapsUrl("https://evilgoogle.com/maps")).toBe(false);
+    expect(isGoogleMapsUrl("http://maps.google.com/?cid=1")).toBe(false);
+    expect(isGoogleMapsUrl("not a url")).toBe(false);
   });
 });
 
@@ -79,7 +109,7 @@ describe("checkRestaurants", () => {
   it("verifies a real, open place and records Google's data", async () => {
     const find = vi.fn(async () => ({ ok: true as const, data: [place({})] }));
     const r = await checkRestaurants([draft("Taberna do Mercado")], ["Lisbon"], find);
-    expect(r.status).toEqual({ status: "OK", named: 1, checked: 1 });
+    expect(r.status).toEqual({ status: "OK", named: 1, checked: 1, unchecked: 0 });
     expect(r.perOption[0]![restaurantKey("Taberna do Mercado")]).toMatchObject({
       status: "OPEN",
       rating: 4.5,
@@ -125,6 +155,48 @@ describe("checkRestaurants", () => {
     const find = async () => ({ ok: false as const, reason: "PROVIDER_ERROR" as const, message: "500", retryable: true });
     const r = await checkRestaurants([draft("Taberna do Mercado")], ["Lisbon"], find);
     expect(r.perOption[0]).toEqual({});
+    expect(r.status).toEqual({ status: "UNAVAILABLE" });
+  });
+
+  it("the same name in two cities is two checks (review fix)", async () => {
+    const find = vi.fn(async (p: { city?: string }) => ({
+      ok: true as const,
+      data: [place(p.city === "Porto" ? { location: undefined, formattedAddress: "Porto, Portugal", rating: 3.9 } : {})],
+    }));
+    const lisbonDay = { activities: [{ title: "Dinner", dining: { restaurantName: "Taberna do Mercado" } }] };
+    const portoDraft = {
+      days: [{ activities: [{ title: "Hotel", bookable: { kind: "HOTEL", candidateName: "Porto Inn" } }, { title: "Dinner in Porto", dining: { restaurantName: "Taberna do Mercado" } }] }],
+    };
+    const r = await checkRestaurants([{ days: [lisbonDay] }, portoDraft], ["Lisbon", "Porto"], find);
+    expect(find).toHaveBeenCalledTimes(2);
+    expect(r.perOption[1]![restaurantKey("Taberna do Mercado")]).toMatchObject({ rating: 3.9 });
+  });
+
+  it("a key rejected after the probe counts as unchecked, not OK-and-done", async () => {
+    let n = 0;
+    const find = async () =>
+      n++ === 0
+        ? ({ ok: false as const, reason: "NO_AVAILABILITY" as const })
+        : ({ ok: false as const, reason: "NOT_CONFIGURED" as const, message: "403" });
+    const r = await checkRestaurants([draft("A One", "B Two", "C Three")], ["Lisbon"], find);
+    expect(r.status).toEqual({ status: "OK", named: 3, checked: 1, unchecked: 2 });
+  });
+
+  it("retries a short rate limit once", async () => {
+    let n = 0;
+    const find = vi.fn(async () =>
+      n++ === 0 ? ({ ok: false as const, reason: "RATE_LIMITED" as const, retryAfterMs: 5 }) : ({ ok: true as const, data: [place({})] }),
+    );
+    const r = await checkRestaurants([draft("Taberna do Mercado")], ["Lisbon"], find);
+    expect(find).toHaveBeenCalledTimes(2);
+    expect(r.perOption[0]![restaurantKey("Taberna do Mercado")]?.status).toBe("OPEN");
+  });
+
+  it("never throws, even if the provider does", async () => {
+    const find = async () => {
+      throw new Error("boom");
+    };
+    const r = await checkRestaurants([draft("Taberna do Mercado")], ["Lisbon"], find as never);
     expect(r.status).toEqual({ status: "UNAVAILABLE" });
   });
 

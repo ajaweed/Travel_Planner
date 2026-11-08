@@ -11,17 +11,21 @@
 // Results are stored per option as `restaurantChecks` keyed by name, NOT on
 // the model's dining blocks: the model can never write its own "verified".
 //
-// COST: one billable Text Search per distinct restaurant name (no Details
-// call), de-duplicated across options and capped per generation.
+// COST: one billable Text Search per distinct (restaurant, city), with no
+// Details call, de-duplicated across options and capped per generation.
 
-import { reviews, type RestaurantPlace } from "@trip-planner/integrations";
+import { reviews, type ProviderResult, type RestaurantPlace } from "@trip-planner/integrations";
 import { resolveDraftCities } from "./activityPlaces";
 import { type Coords, distanceKm, getPlaceResults } from "./destinationPhoto";
 import { placeLabel } from "./placeNames";
-import { tokens } from "./stopPhotos";
+import { sameWord, tokens } from "./stopPhotos";
 
 export const MAX_RESTAURANT_CHECKS_PER_GENERATION = 24;
 export const MAX_DISTANCE_FROM_CITY_KM = 40;
+/** Places calls in flight at once (reviewLookup runs its own batch alongside). */
+const CONCURRENCY = 4;
+/** Longest we'll wait to retry one rate-limited call. */
+const MAX_RETRY_WAIT_MS = 2_000;
 
 export type RestaurantCheck =
   | {
@@ -37,16 +41,27 @@ export type RestaurantCheck =
   /** Google had nothing matching this name in this city. Not proof it doesn't exist. */
   | { status: "NOT_FOUND" };
 
-/** Why checks are missing, when they are (shown once, like reviewLookup). */
+/** Why checks are missing, when they are. Shown once under the options. */
 export type RestaurantLookupStatus =
-  | { status: "OK"; named: number; checked: number }
+  /** `unchecked`: names past the cap or whose lookup failed -- they show no check line. */
+  | { status: "OK"; named: number; checked: number; unchecked: number }
   | { status: "NOT_CONFIGURED" }
   | { status: "UNAVAILABLE" }
   | { status: "NO_CANDIDATES" };
 
-/** Key for a restaurant within one option (its name, normalised). */
+/**
+ * Key for a restaurant within one option: its whole name, normalised (case,
+ * accents, punctuation) but with every word kept -- "Bar 1" and "Bar 2", or
+ * "A Cevicheria" and "O Cevicheria", are different places.
+ */
 export function restaurantKey(name: string): string {
-  return tokens(name).join(" ");
+  return name
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .join(" ");
 }
 
 // Words that say what kind of place it is, not which one: "Taberna do
@@ -62,17 +77,14 @@ const GENERIC = new Set(
   ).split(" "),
 );
 
-function sameWord(a: string, b: string): boolean {
-  return a === b || (Math.min(a.length, b.length) >= 4 && (a.startsWith(b) || b.startsWith(a)));
-}
-
 /**
- * Is Google's place the one that was named? Either most of the requested
- * name's distinctive words (all, if it has two or fewer) are in Google's name,
- * or Google's name is a shorter form whose distinctive words are all in the
- * requested one ("Páteo" for "Páteo - Bairro Alto Hotel"). Generic words
- * ("Taberna", "Restaurant", "Indian") never match on their own; a name made
- * only of generic words ("Café Central") needs all its words.
+ * Is Google's place the one that was named?
+ * - Named with distinctive words: most of them (all, if two or fewer) are in
+ *   Google's name, or Google's name is a shorter form whose distinctive words
+ *   are all in the requested one ("Páteo" for "Páteo - Bairro Alto Hotel").
+ * - Named only with generic words ("The Italian Restaurant", "Rome Kitchen"):
+ *   Google's name must be those words too, with nothing distinctive of its
+ *   own -- otherwise any "Da Mario Italian Restaurant" would "verify" it.
  */
 export function nameMatches(requested: string, googleName: string, city?: string): boolean {
   const cityWords = city ? tokens(city) : [];
@@ -80,14 +92,14 @@ export function nameMatches(requested: string, googleName: string, city?: string
   const req = tokens(requested).filter(notCity);
   const got = tokens(googleName).filter(notCity);
   const has = (words: string[], t: string) => words.some((w) => sameWord(t, w));
+  const gotDistinctive = got.filter((t) => !GENERIC.has(t));
 
   const distinctive = req.filter((t) => !GENERIC.has(t));
-  const needed = distinctive.length ? distinctive : req;
-  if (needed.length === 0) return false;
-  const hits = needed.filter((t) => has(got, t)).length;
-  if (needed.length <= 2 ? hits === needed.length : hits / needed.length >= 0.6) return true;
-
-  const gotDistinctive = got.filter((t) => !GENERIC.has(t));
+  if (distinctive.length === 0) {
+    return req.length > 0 && gotDistinctive.length === 0 && req.every((t) => has(got, t));
+  }
+  const hits = distinctive.filter((t) => has(got, t)).length;
+  if (distinctive.length <= 2 ? hits === distinctive.length : hits / distinctive.length >= 0.6) return true;
   return gotDistinctive.length > 0 && gotDistinctive.every((t) => has(req, t));
 }
 
@@ -101,6 +113,17 @@ export function inCity(place: RestaurantPlace, city: string, cityCoords?: Coords
   return cityStems.length > 0 && cityStems.every((c) => addr.includes(c));
 }
 
+/** Only Google's own Maps URLs: google.com or a subdomain of it, over https. */
+export function isGoogleMapsUrl(u: string | undefined): boolean {
+  if (!u) return false;
+  try {
+    const { protocol, hostname } = new URL(u);
+    return protocol === "https:" && (hostname === "google.com" || hostname.endsWith(".google.com"));
+  } catch {
+    return false;
+  }
+}
+
 function toCheck(place: RestaurantPlace): RestaurantCheck {
   const status =
     place.businessStatus === "OPERATIONAL"
@@ -108,20 +131,13 @@ function toCheck(place: RestaurantPlace): RestaurantCheck {
       : place.businessStatus === "CLOSED_TEMPORARILY" || place.businessStatus === "CLOSED_PERMANENTLY"
         ? place.businessStatus
         : "FOUND";
-  let googleMapsUri: string | undefined;
-  try {
-    // Only Google's own Maps URLs; never a link we didn't expect.
-    if (place.googleMapsUri && new URL(place.googleMapsUri).hostname.endsWith("google.com")) googleMapsUri = place.googleMapsUri;
-  } catch {
-    googleMapsUri = undefined;
-  }
   return {
     status,
     name: place.name,
     address: place.formattedAddress,
     rating: place.rating,
     userRatingsTotal: place.userRatingsTotal,
-    googleMapsUri,
+    googleMapsUri: isGoogleMapsUrl(place.googleMapsUri) ? place.googleMapsUri : undefined,
   };
 }
 
@@ -137,34 +153,42 @@ type DraftLike = {
 };
 
 type Find = typeof reviews.findRestaurant;
+type Result = { perOption: Array<Record<string, RestaurantCheck>>; status: RestaurantLookupStatus };
 
 /**
  * Checks every distinct named restaurant across the options. Returns, per
  * option, the checks for the restaurants it names, plus one status.
- * Never throws: a provider failure leaves names unchecked (absent), which the
- * UI shows as nothing rather than as "not found".
+ * Never throws: this is an optional enrichment and must never cost the
+ * traveller their itinerary. Anything unexpected reports UNAVAILABLE.
  */
-export async function checkRestaurants(
-  drafts: DraftLike[],
-  destinations: string[],
-  find: Find = reviews.findRestaurant,
-): Promise<{ perOption: Array<Record<string, RestaurantCheck>>; status: RestaurantLookupStatus }> {
-  // Distinct (name, city) pairs, in plan order.
+export async function checkRestaurants(drafts: DraftLike[], destinations: string[], find: Find = reviews.findRestaurant): Promise<Result> {
+  try {
+    return await checkRestaurantsUnsafe(drafts, destinations, find);
+  } catch (err) {
+    console.error("checkRestaurants failed:", err);
+    return { perOption: drafts.map(() => ({})), status: { status: "UNAVAILABLE" } };
+  }
+}
+
+async function checkRestaurantsUnsafe(drafts: DraftLike[], destinations: string[], find: Find): Promise<Result> {
+  // Distinct (name, city) pairs in plan order: the same name in two cities is
+  // two places. Each option records which pair each of its names refers to.
   const wanted = new Map<string, { name: string; city?: string }>();
-  const namesPerOption = drafts.map((draft) => {
+  const pairsPerOption = drafts.map((draft) => {
     const cities = resolveDraftCities(draft.days, destinations);
-    const keys: string[] = [];
+    const pairs = new Map<string, string>(); // restaurantKey(name) -> pair key; first city wins within an option
     draft.days.forEach((day, d) =>
       day.activities.forEach((a, i) => {
         const name = a.dining?.restaurantName?.trim();
-        if (!name) return;
-        const key = restaurantKey(name);
-        if (!key) return;
-        keys.push(key);
-        if (!wanted.has(key)) wanted.set(key, { name, city: cities[d]?.[i] ?? destinations[0] });
+        const key = name ? restaurantKey(name) : "";
+        if (!name || !key || pairs.has(key)) return;
+        const city = cities[d]?.[i] ?? destinations[0];
+        const pairKey = `${key}|${city ? restaurantKey(city) : ""}`;
+        pairs.set(key, pairKey);
+        if (!wanted.has(pairKey)) wanted.set(pairKey, { name, city });
       }),
     );
-    return keys;
+    return pairs;
   });
 
   const empty = drafts.map(() => ({}));
@@ -182,29 +206,52 @@ export async function checkRestaurants(
 
   const checks = new Map<string, RestaurantCheck>();
   let failures = 0;
-  const checkOne = async ([key, { name, city }]: (typeof todo)[number]): Promise<"NOT_CONFIGURED" | void> => {
+
+  const call = async (name: string, city: string | undefined, near: Coords | undefined) => {
+    const params = { name, city: city ? placeLabel(city) : undefined, near };
+    let res: ProviderResult<RestaurantPlace[]> = await find(params);
+    // One retry for a rate limit, if Google asks for a short wait.
+    if (!res.ok && res.reason === "RATE_LIMITED" && res.retryAfterMs <= MAX_RETRY_WAIT_MS) {
+      const wait = res.retryAfterMs;
+      await new Promise((r) => setTimeout(r, wait));
+      res = await find(params);
+    }
+    return res;
+  };
+
+  const checkOne = async ([pairKey, { name, city }]: (typeof todo)[number]): Promise<"NOT_CONFIGURED" | void> => {
     const near = city ? coords.get(city) : undefined;
-    const res = await find({ name, city: city ? placeLabel(city) : undefined, near });
+    const res = await call(name, city, near);
     if (res.ok) {
       const match = res.data.find((p) => nameMatches(name, p.name, city) && (!city || inCity(p, city, near)));
-      checks.set(key, match ? toCheck(match) : { status: "NOT_FOUND" });
-    } else if (res.reason === "NO_AVAILABILITY") {
-      checks.set(key, { status: "NOT_FOUND" });
-    } else if (res.reason === "NOT_CONFIGURED") {
-      return "NOT_CONFIGURED";
-    } else {
-      failures++;
+      checks.set(pairKey, match ? toCheck(match) : { status: "NOT_FOUND" });
+      return;
     }
+    if (res.reason === "NO_AVAILABILITY") {
+      checks.set(pairKey, { status: "NOT_FOUND" });
+      return;
+    }
+    failures++; // incl. a key rejected after the probe: unchecked, and counted
+    if (res.reason === "NOT_CONFIGURED") return "NOT_CONFIGURED";
   };
 
   // Probe first: with no key (or a rejected one) every call would fail the same way.
   if ((await checkOne(todo[0]!)) === "NOT_CONFIGURED") return { perOption: empty, status: { status: "NOT_CONFIGURED" } };
-  await Promise.all(todo.slice(1).map(checkOne));
+
+  // The rest, a few at a time, so a modest Places quota isn't burst into 429s.
+  const queue = todo.slice(1);
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+      for (let next = queue.shift(); next; next = queue.shift()) await checkOne(next);
+    }),
+  );
 
   const status: RestaurantLookupStatus =
-    failures === todo.length ? { status: "UNAVAILABLE" } : { status: "OK", named: wanted.size, checked: checks.size };
-  const perOption = namesPerOption.map((keys) =>
-    Object.fromEntries(keys.flatMap((k) => (checks.has(k) ? [[k, checks.get(k)!] as const] : []))),
+    checks.size === 0 && failures > 0
+      ? { status: "UNAVAILABLE" }
+      : { status: "OK", named: wanted.size, checked: checks.size, unchecked: wanted.size - checks.size };
+  const perOption = pairsPerOption.map((pairs) =>
+    Object.fromEntries([...pairs].flatMap(([key, pairKey]) => (checks.has(pairKey) ? [[key, checks.get(pairKey)!] as const] : []))),
   );
   return { perOption, status };
 }
