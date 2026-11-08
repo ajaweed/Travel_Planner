@@ -101,6 +101,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
   return NextResponse.json({
     trip: { ...trip, itinerary },
+    // For the header photos; [] until the brief names a place.
+    destinations,
     aiBooking: getAiBookingReadiness(),
     budget,
     unreadCount: unread.length,

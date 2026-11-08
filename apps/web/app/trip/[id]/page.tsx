@@ -23,6 +23,7 @@ import { ContourPattern } from "../../components/ContourPattern";
 import { ItineraryTimeline } from "../../components/ItineraryTimeline";
 import { Notifications } from "../../components/Notifications";
 import { StatusPill } from "../../components/StatusPill";
+import { TripPhotoBanner } from "../../components/TripPhotoBanner";
 import { Alert, buttonClasses, CARD_CLASSES, INPUT_CLASSES } from "../../components/ui";
 
 type TripData = any; // the API route returns Prisma's shape directly; tighten with a shared type once it stabilizes.
@@ -298,6 +299,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
               )}
             </div>
           )}
+          <TripPhotoBanner destinations={Array.isArray(data.destinations) ? data.destinations : []} />
         </div>
       </div>
 

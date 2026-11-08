@@ -18,6 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { ContourPattern } from "./components/ContourPattern";
+import { DestinationIdeas } from "./components/DestinationIdeas";
 import { Alert, CHIP_CLASSES, buttonClasses } from "./components/ui";
 
 // "Surprise me" first on purpose: it's the "I don't know what I want" path.
@@ -177,6 +178,8 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      <DestinationIdeas onPick={applyExample} disabled={submitting} />
 
       <section aria-labelledby="how-heading" className="mx-auto max-w-5xl px-6 pb-24 pt-8 md:px-8">
         <h2 id="how-heading" className="sr-only">
