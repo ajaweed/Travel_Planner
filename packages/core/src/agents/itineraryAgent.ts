@@ -188,7 +188,7 @@ export async function runItineraryAgent(
     messages: [
       {
         role: "user",
-        content: `TripBrief:\n${JSON.stringify(brief)}\n\nFraming for this option:\n${variant.framing}`,
+        content: `Today's date: ${todayISO()}\n\nTripBrief:\n${JSON.stringify(brief)}\n\nFraming for this option:\n${variant.framing}`,
       },
     ],
   });
