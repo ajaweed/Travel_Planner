@@ -273,3 +273,29 @@ contour SVG. No photos, no social proof.
   pass.
 Kept intact: "No rating available" honesty copy (now `text-sm`, deliberately not
 styled like a low rating), all existing state copy, and the status-gating logic.
+
+**2026-11-08 -- ux-designer** -- Revised `docs/visual-design.md` on
+`ux-designer/visual-refresh` for the owner's product change: **the app no longer books
+anything.** What changed in the spec:
+- **Retired:** per-booking status pills, booking banners, BOOKING_CONFIRMED/FAILED
+  notification tiles, payment UI, and every "we book" line of copy. Landing, options
+  header and footnotes now say "We never book or charge anything" / "book each piece
+  yourself".
+- **New §4.7 `BookLink`:** a real `<a target="_blank" rel="noopener noreferrer">`
+  styled as a secondary button. Text is "Search on {Provider}" plus the lucide
+  `ExternalLink` icon and sr-only "(opens in a new tab)". It says "Search", not "Book
+  now", because it's a prefilled search. There's an optional "what this searches for"
+  line. When no deterministic link exists, it shows honest no-link text naming the
+  missing detail. Never a model-made URL.
+- **BudgetBar** is estimate-only: "~" figures, a striped fill (stripes = estimate), an
+  always-visible "not live prices" footnote, and a *warning* (not danger) tone when the
+  estimate exceeds budget.
+- The post-choice pill reads "Plan ready", never "Confirmed"/"Booked".
+- **New §4.8 (optional/v2):** a per-day "Things to book" checklist the user ticks.
+  Checked rows say "You marked this booked", with no strikethrough and no green
+  "Booked" pill. Persistence (API field vs localStorage) is a backend-dev call.
+
+**backend-dev:** for each bookable item the UI needs a provider display name, the URL
+(or an explicit missing-link reason) and optionally a short search summary. It also needs
+the chosen option's estimate for the budget bar and the name of the post-choice trip
+status. Variant-key persistence is still needed for tier colors.

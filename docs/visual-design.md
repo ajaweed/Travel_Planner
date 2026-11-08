@@ -8,6 +8,19 @@ This doc tells you what to build, with exact values. Flow and copy commitments f
 `.claude/agents/ux-designer.md` and the options spec in `docs/team-log.md` still apply.
 Where this doc and those conflict, the commitments win.
 
+> **Product change, 2026-11-08: the app no longer books anything.** Each bookable item
+> (flight, hotel, tour/event) instead gets a **"Book it yourself"** link. The link is a
+> deterministic provider search URL built from the item's own details (dates,
+> origin/destination, place name). The model never writes these URLs. This spec reflects
+> that change:
+> - No booking-progress or booking-status states (SEARCHING/BOOKED/FAILED/AWAITING_CONFIRMATION).
+> - No payment UI.
+> - No "provider not configured" booking states.
+> - Budget figures are **estimates only**, since we never see real prices.
+>
+> The link-out pattern is §4.7. backend-dev is building the data side on `main`, so field
+> names below are described by meaning. Wire them to whatever shape lands.
+
 ---
 
 ## 1. Direction and why
@@ -22,7 +35,9 @@ sand-colored paper, with a deep-lagoon brand color for anything you click or tru
 - **Aspirational, without stock photos.** Gradients and an original contour-line pattern
   (map topography) do the work photography usually does. We hold no image rights, and a
   photo of the wrong beach is a small lie anyway (see §3).
-- **Trustworthy, because it handles money.** Everything you can act on (buttons, links,
+- **Trustworthy, because people spend real money on what it tells them.** We don't take
+  payment, but users go book flights and hotels based on our plan and our cost
+  estimates. Everything you can act on (buttons, links,
   focus rings, progress) uses one sober color, lagoon teal `#0E6B66`. Money figures use
   a tabular sans (Inter `tabular-nums`) and are never set in the decorative serif.
   Status colors mean one thing each and always come with an icon and a word, never
@@ -30,7 +45,7 @@ sand-colored paper, with a deep-lagoon brand color for anything you click or tru
   whitespace, no glassmorphism, no confetti.
 - **Why light rather than a nicer dark theme.** Travel products signal daylight and
   openness. The current dark UI with neutral grays is a big part of what reads as
-  "bland/technical". Dark mode is explicitly out of scope for this pass (§10).
+  "bland/technical". Dark mode is explicitly out of scope for this pass (§7).
 
 ---
 
@@ -69,7 +84,7 @@ colors: {
 | `ink-900` | `#1F2A33` | Primary text, headings |
 | `ink-700` | `#3D4B57` | Secondary text, body copy in cards |
 | `ink-500` | `#5E6B76` | Muted text: captions, "est. total", honesty notes |
-| `lagoon-600` | `#0E6B66` | Primary buttons, links, focus ring, budget "committed" fill |
+| `lagoon-600` | `#0E6B66` | Primary buttons, links (incl. "Book it yourself" link text), focus ring, budget estimate stripes |
 | `lagoon-700` | `#0A5652` | Primary hover/active; text on `lagoon-50` |
 | `lagoon-50` | `#E2F0EE` | Selected/hover tint, info-ish highlight |
 | `sunset-600` | `#B4502C` | Brand accent: hero accent word, clarification accent bar, decorative icons. Not for buttons (too close to danger). |
@@ -110,8 +125,8 @@ components):**
 - `sunset-600` passes at 4.77 for text, but keep it to accents and large text. It is not
   a CTA color.
 - `value-600` (`#2F6B3E`) and `success-700` (`#1E6B3C`) are close. That's acceptable
-  because tier cards (CHOOSING) and booking pills (BOOKING onward) are never on screen
-  together, and both always carry an icon and a label.
+  because tier cards (CHOOSING) and the success-green "Plan ready" pill and checklist
+  ticks (after choosing) are never on screen together, and both always carry an icon and a label.
 
 ### 2.2 Typography (next/font)
 
@@ -174,7 +189,7 @@ load-bearing, so they shouldn't be the hardest text on the page to read.
   ```js
   backgroundImage: {
     sunrise: "radial-gradient(1200px 600px at 10% -10%, #FDE3C8 0%, rgba(253,227,200,0) 60%), radial-gradient(900px 500px at 100% 0%, #D7ECE8 0%, rgba(215,236,232,0) 55%)",
-    "pending-stripes": "repeating-linear-gradient(135deg, rgba(14,107,102,0.45) 0 6px, rgba(14,107,102,0.25) 6px 12px)",
+    "estimate-stripes": "repeating-linear-gradient(135deg, rgba(14,107,102,0.45) 0 6px, rgba(14,107,102,0.25) 6px 12px)",
   }
   ```
 
@@ -194,11 +209,11 @@ gated on `motion-safe:`.
   - In-progress indicators: `motion-safe:animate-spin` on `Loader2`, and
     `motion-safe:animate-pulse` on skeletons and on the live status dot.
   - Budget bar width change: `transition-[width] duration-500`.
-- Not allowed: parallax, auto-playing carousels, confetti on booking (it handles money, so
-  calm is the point), animating the gradient background, bounce easing.
+- Not allowed: parallax, auto-playing carousels, confetti (people are about to spend real
+  money on this plan, so calm is the point), animating the gradient background, bounce easing.
 - `prefers-reduced-motion: reduce`: there is no spin, pulse, lift or rise. State changes
   are still visible through text and icon changes, and **every in-progress state also has
-  text** ("Searching…"), so nothing relies on animation to communicate. Add to `globals.css`:
+  text** ("Drafting your options…"), so nothing relies on animation to communicate. Add to `globals.css`:
   ```css
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
@@ -238,7 +253,7 @@ The disabled primary uses `sand-300` bg with `ink-700` text (5.57:1) instead of
      masked to fade out toward the content (`[mask-image:radial-gradient(...)]`). Hand-draw
      6–8 paths in an SVG, or generate them once. Don't pull a pattern from a site with
      unclear licensing.
-  3. Icons for kinds: flight `Plane`, hotel `BedDouble`, tour `Ticket`, unbooked
+  3. Icons for kinds: flight `Plane`, hotel `BedDouble`, tour `Ticket`, non-bookable
      activity `MapPin`, day `CalendarDays`.
 - **No fabricated social proof anywhere**: no testimonials, "trusted by" logos, star
   rows, user counts or placeholder ratings. Ratings appear only where
@@ -266,21 +281,21 @@ Layout, top to bottom, inside a `relative overflow-hidden bg-sunrise` section wi
 contour pattern behind it:
 
 1. **Eyebrow pill**: `Chip` styling but not interactive, `bg-white/70`, `Sparkles` icon
-   in `sunset-600`, text "Describe it. Compare options. We book it."
+   in `sunset-600`, text "Describe it. Compare options. Book it your way."
 2. **H1 (display)**: "Tell us the feeling." followed by a line break and
    "<em>We'll find the trip.</em>". The `<em>` is Fraunces italic in `text-sunset-600`.
    (Replaces the "Trip Planner AI" H1, since the name is already in the header.)
 3. **Subhead (body-lg, ink-700, max-w-xl, centered)**: "Not sure where to go? Say so.
-   We'll draft a few options with real costs side by side, and nothing is booked until you
-   pick one."
+   We'll draft a few options with estimated costs side by side. Then you book each piece
+   yourself, straight from the plan."
 4. **Prompt box**: a `Card` with `rounded-3xl shadow-lift p-2`, `max-w-2xl w-full`.
    - Borderless textarea inside (`border-0 bg-transparent text-lg p-4 focus:ring-0`, 4
      rows). The card itself shows focus via `focus-within:ring-2 focus-within:ring-lagoon-600/40`.
      Placeholder text is unchanged. Keep a visible `<label class="sr-only">` "Describe your
      trip".
    - Footer row inside the card, `flex items-center justify-between border-t border-sand-100 px-4 py-3`:
-     on the left, a caption in ink-500 with a `ShieldCheck` icon: "Nothing is booked until you
-     choose a plan." On the right, a primary `Button` reading "Plan my trip" with `ArrowRight`.
+     on the left, a caption in ink-500 with a `ShieldCheck` icon: "We never book or charge
+     anything." On the right, a primary `Button` reading "Plan my trip" with `ArrowRight`.
    - Submitting: the button shows `Loader2` (spin, motion-safe) and "Drafting your
      options…", and the textarea becomes `readOnly` with `aria-busy`. Copy changed from
      "Planning..." so the user knows what's happening (commitment 3).
@@ -302,8 +317,8 @@ contour pattern behind it:
    mobile), each with a 40px `rounded-full bg-lagoon-50` circle holding a `lagoon-700` icon,
    an h3, and one line of small ink-700:
    - `MessageSquareText` **Describe it**: "Any detail you have, or none at all."
-   - `Columns3` **Compare real options**: "Value, balanced and elevated takes, with the cost of each."
-   - `Wallet` **We book and track the budget**: "Every booking shows up as it happens, and you approve anything over budget."
+   - `Columns3` **Compare real options**: "Value, balanced and elevated takes, each with an estimated cost."
+   - `ExternalLink` **Book it yourself**: "Every flight, hotel and tour links to a ready-made search on the provider's site."
 
    This section is factual only. No logos, no stats.
 
@@ -317,19 +332,26 @@ contour pattern at 5% opacity), containing:
   the itinerary exists. If neither is known, omit the row. Don't invent a placeholder.
 
 **Budget card** (`BudgetBar.tsx`, directly under the header, overlapping the band by
-`-mt-6` for depth). It's a `Card` with `p-5`:
-- Left: eyebrow "Budget", then the price-style figure "$1,240" (committed + pending), with
-  "of $2,500" in body ink-500, all in tabular-nums.
-- Right: "$1,260 left" in small ink-700, or the over-budget state below.
-- Bar: `h-2.5 rounded-full bg-sand-100` track, with **two segments**: committed as solid
-  `bg-lagoon-600`, then pending as `bg-pending-stripes` (striped, so "not final yet" doesn't
-  rely on color alone). Widths are proportional, and the 100% clamp stays.
-- Legend below in caption ink-500 when pending > 0: a solid swatch "Booked $X" and a
-  striped swatch "Pending confirmation $Y". This replaces the "Includes … pending" sentence
-  with the same information.
-- Over budget: the card gets `border-danger-700 border-l-4`, the bar fill turns
-  `bg-danger-700`, and an `AlertTriangle` sits beside "Over budget by $X." in
-  `text-danger-700 font-medium`. Copy is unchanged.
+`-mt-6` for depth). It's a `Card` with `p-5`. **Everything in it is an estimate, and the
+visuals must say so.** We never see a real price, so nothing here may look like a
+statement or receipt.
+- Left: eyebrow "Estimated cost", then the price-style figure with a leading tilde,
+  "~$1,240", followed by "of your $2,500 budget" in body ink-500, all in tabular-nums. The
+  figure is the chosen option's estimate. Before a plan is chosen, show only "Budget
+  $2,500" with no bar (the option cards carry the per-option estimates).
+- Right: "~$1,260 to spare" in small ink-700, or the over-estimate state below.
+- Bar: `h-2.5 rounded-full bg-sand-100` track with **one striped fill**,
+  `bg-estimate-stripes`. It's never solid: stripes are the visual language for
+  "estimate, not final". Clamp the width at 100%. There are no booked/pending segments
+  any more, because nothing is ever confirmed in-app.
+- Footnote, always visible (caption ink-500, `Info` icon): "Estimate from your plan, not
+  live prices. Final prices are set on each provider's site when you book." This
+  replaces the "Includes … pending confirmation" line.
+- Estimate over budget: the card gets `border-l-4 border-l-warning-700`, the stripes stay
+  but the fill turns warning-tinted (`bg-warning-700/40`), and an `AlertTriangle` sits
+  beside "Estimated ~$X over budget. Consider the value option or revise the plan." in
+  `text-warning-700 font-medium`. **Use warning, not danger**: it's a forecast, not a
+  charge that already happened.
 
 **Clarification prompt** (the `pendingClarification` form). It's a question, not a warning,
 so it **moves off amber**:
@@ -343,8 +365,8 @@ so it **moves off amber**:
 
 **Planning state (`PLANNING`):**
 - An h2 "Drafting a few versions of this trip" with a `Loader2` (spin) before it, and the
-  existing sentence below it in ink-700 ("This takes a minute, and nothing is being booked
-  yet.").
+  sentence "This takes a minute or so." below it in ink-700. Drop the old "nothing is being
+  booked yet", because we never book.
 - Three skeleton cards matching the real option card's structure: a 40px tier header
   strip in `sand-100`, a title bar, a price bar and 3 text lines, all `bg-sand-100
   motion-safe:animate-pulse rounded`. A skeleton that mirrors the real layout makes
@@ -372,7 +394,7 @@ Card anatomy (a `Card`, `overflow-hidden border-t-4 flex flex-col`, hover lift):
      "Lowest estimate" if it's the cheapest. The delta is the comparison signal, so it's
      always on its own line and never truncated.
    - Facts row: a `flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-700` list of icon+text
-     pairs: `CalendarDays` "5 days", `MapPin` "14 activities", `Ticket` "4 to book",
+     pairs: `CalendarDays` "5 days", `MapPin` "14 activities", `Ticket` "4 to book yourself",
      `Gauge` "Pace: Relaxed".
      **The pace badge must read "Pace: Balanced", not just "Balanced"**, because a
      value-tier card with a "Balanced" badge would collide with the balanced tier name.
@@ -392,21 +414,23 @@ Card anatomy (a `Card`, `overflow-hidden border-t-4 flex flex-col`, hover lift):
    `Check` icon.
 
 Section header above the grid: an h2 such as "3 ways to do this trip" (drop "— pick
-one"; the buttons make that obvious), then "Nothing is booked until you choose." as body
-ink-700 with a `ShieldCheck` icon. The footnotes under the grid ("Estimates for
+one"; the buttons make that obvious), then "We don't book anything. Once you choose, you'll
+get a link to book each piece yourself." as body ink-700 with a `ShieldCheck` icon. The footnotes under the grid ("Estimates for
 comparison…" and the `ReviewNote`) become `text-sm text-ink-500` inside a `sand-100
-rounded-xl p-4` box with an `Info` icon. Copy is unchanged.
+rounded-xl p-4` box with an `Info` icon. The `ReviewNote` copy is unchanged. The estimates
+line becomes "Estimated costs, for comparison. Real prices are whatever the provider
+charges when you book."
 
 Choosing state (after the first click):
 - The chosen card gets `ring-2 ring-lagoon-600 ring-offset-2 ring-offset-sand-50`, and its
-  button becomes `Loader2` + "Starting bookings…".
+  button becomes `Loader2` + "Saving your plan…".
 - The other cards go to `opacity-60 saturate-50` with no hover lift, and their buttons are
-  disabled. That makes the lock visible, which matters because the lock is there to stop a
-  double spend.
-- The `chooseError` alert sits above the grid as an `Alert`. Use tone `info` for the
-  "Still working on this…" message (it's not a failure) and tone `danger` for real errors.
-  frontend-dev: the component currently receives one `error` string. Add an `errorTone`
-  prop, or render the timeout message from the page with its own tone.
+  disabled, so the user can see their choice registered and doesn't double-submit.
+- The `chooseError` alert sits above the grid as an `Alert`. Use tone `info` for anything
+  that means "still working" and tone `danger` for real errors. Any old "bookings can
+  take a few minutes" copy goes away with the booking pipeline. frontend-dev: the
+  component currently receives one `error` string, so add an `errorTone` prop if both
+  tones remain.
 
 Grid: `grid gap-5 md:grid-cols-2 lg:grid-cols-3 items-stretch`, so cards are equal height
 and the buttons align along the bottom.
@@ -424,25 +448,27 @@ and the buttons align along the bottom.
 **Single option** (`options.length === 1`): same card, centered at `max-w-md`, heading
 "Your itinerary".
 
-**Itinerary (BOOKING onward):** a vertical timeline.
+**Itinerary (after a plan is chosen):** a vertical timeline.
 - The left rail is `border-l-2 border-sand-300 ml-5`. Each day has a 40px circle on the
   rail (`bg-white ring-2 ring-sand-300 font-display text-lg text-ink-900`) showing the
   day number.
 - The day `Card` sits to the right: h3 "Day 1" plus the date as a caption in ink-500
   ("Tue, Mar 10"), then the summary in small ink-700.
-- Activities: `divide-y divide-sand-100`. Each row has the kind icon (from
-  `activity.booking.kind`: `Plane`/`BedDouble`/`Ticket`, or `MapPin` when there's no booking)
-  in a 32px `rounded-lg bg-sand-100` tile, then the title in `font-medium` with the
-  description below in small ink-500, and the right-aligned `StatusPill`. If `startTime`
-  exists, show it as a tabular-nums caption before the title. When
-  `booking.priceCents` exists and the booking is BOOKED, show the price under the pill as
-  a caption in tabular-nums.
-- **FAILED booking row:** below the title, a small line in danger-700 with `failureReason`
-  when present. Keep it plain ("Not booked: provider not configured yet"); don't paraphrase
-  it into vagueness (commitment 4). AWAITING_CONFIRMATION rows get `bg-warning-50/60` on
-  the row.
-- Status banners above the timeline ("Setting up …", "Plan locked in — booking…"): an
-  `Alert` tone `info` with `Loader2` (spin) instead of a static icon. Copy is unchanged.
+- Activities: `divide-y divide-sand-100`. Each row has the kind icon
+  (`Plane`/`BedDouble`/`Ticket` for flight/hotel/tour-or-event, `MapPin` for activities
+  with nothing to book) in a 32px `rounded-lg bg-sand-100` tile, then the title in
+  `font-medium` with the description below in small ink-500. If `startTime` exists, show
+  it as a tabular-nums caption before the title. **There are no per-row status pills any
+  more.**
+- Bookable rows get the **"Book it yourself" link-out on the right** (stacked under the
+  text on mobile). See §4.7 for the exact treatment. Bookable rows also get a faint
+  `bg-lagoon-50/40` row tint, so "things you need to act on" are scannable down the
+  timeline.
+- Day header extra: when a day has bookable items, add a right-aligned caption chip
+  "2 to book" (`rounded-full bg-sand-100 text-xs text-ink-700`, `Ticket` icon).
+- Status banners: "Setting up …" / "Plan locked in — booking…" go away. If saving the
+  choice is ever slow enough to need one, use an `Alert` tone `info` with `Loader2` and
+  "Saving your plan…".
 
 **Already chosen (409) / planning failed / no options / options fetch error:** see §4.5.
 
@@ -470,14 +496,14 @@ but it's owned by the revision-flow branch, which should build it to this visual
 | Kind | Icon | Tile |
 |---|---|---|
 | ITINERARY_READY | `Columns3` | `bg-lagoon-50 text-lagoon-700` |
-| BOOKING_CONFIRMED | `CheckCircle2` | `bg-success-50 text-success-700` |
-| BOOKING_FAILED | `XCircle` | `bg-danger-50 text-danger-700` |
-| BUDGET_ALERT | `AlertTriangle` | `bg-warning-50 text-warning-700` |
 | CLARIFICATION_NEEDED | `MessageCircleQuestion` | `bg-sunset-50 text-sunset-600` |
-| GENERAL | `Info` | `bg-sand-100 text-ink-700` |
+| BUDGET_ALERT (if kept for "estimate over budget") | `AlertTriangle` | `bg-warning-50 text-warning-700` |
+| GENERAL, and any unknown/legacy kind (old BOOKING_CONFIRMED/BOOKING_FAILED rows on existing trips) | `Info` | `bg-sand-100 text-ink-700` |
+
+The booking-confirmed and booking-failed tiles are retired with the booking pipeline.
 
 - Wrap the list in `aria-live="polite"` so new updates from the 4s poll are announced.
-- Empty: "No updates yet. We'll post here as planning and booking progress." in small
+- Empty: "No updates yet. We'll post here as your plan comes together." in small
   ink-500, with a `Bell` icon.
 
 ### 4.5 Empty, loading and error states
@@ -493,7 +519,8 @@ one heading line, one explanation line, and one action. They are never a bare re
 | Options fetch error | `Alert` danger with `RefreshCw` "Try again" secondary button inside | Existing two-sentence copy unchanged |
 | No options | `Alert` warning, `Compass` icon | Existing copy |
 | Planning failed | `Card` with `border-l-4 border-l-warning-700`, `AlertTriangle`, h3 "We couldn't draft options for this trip", body = existing copy, secondary button "Plan a new trip" → `/` | Existing copy |
-| Already chosen (409) | `Alert` info, `CheckCircle2` | Existing copy |
+| Already chosen (409) | `Alert` info, `CheckCircle2` | "A plan has already been chosen for this trip." (drop "booking is underway") |
+| Bookable item with no link | Inline in the row, see §4.7 | "No search link: missing {travel dates}" |
 | Landing submit error | `Alert` danger under prompt box | Existing |
 
 Errors use `role="alert"`. Loading uses `role="status"`. Retry buttons say what they do.
@@ -502,24 +529,81 @@ Errors use `role="alert"`. Loading uses `role="status"`. Retry buttons say what 
 
 Shape: `inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium`
 + icon (14px) + label. In-progress states get the spinning `Loader2` (motion-safe), so
-there's always a word *and* an icon. Labels stay as they are today.
+there's always a word *and* an icon. The pill is now **trip-level only**. Per-booking pills
+(SEARCHING / OPTIONS_FOUND / AWAITING_CONFIRMATION / BOOKED / FAILED / CANCELLED) are
+retired, because we no longer book.
 
-| Status | Classes | Icon |
-|---|---|---|
-| DRAFT | `bg-sand-100 text-ink-700` | `PencilLine` |
-| PLANNING | `bg-lagoon-50 text-lagoon-700` | `Loader2` (spin) |
-| CHOOSING | `bg-lagoon-600 text-white` | `Columns3` (the user's turn, so it's the strongest pill) |
-| BOOKING | `bg-info-50 text-info-700` | `Loader2` (spin) |
-| CONFIRMED | `bg-success-50 text-success-700` | `CheckCircle2` |
-| NEEDS_ATTENTION | `bg-warning-50 text-warning-700` | `AlertTriangle` |
-| COMPLETED | `bg-sand-100 text-ink-700` | `Flag` |
-| SEARCHING | `bg-info-50 text-info-700` | `Loader2` (spin) |
-| OPTIONS_FOUND | `bg-info-50 text-info-700` | `ListChecks` |
-| AWAITING_CONFIRMATION | `bg-warning-50 text-warning-700` | `HandCoins` |
-| BOOKED | `bg-success-50 text-success-700` | `Check` |
-| FAILED | `bg-danger-50 text-danger-700` | `XCircle` |
-| CANCELLED | `bg-sand-100 text-ink-500` | `Ban` |
-| (unknown) | `bg-sand-100 text-ink-700` | `Circle` |
+| Trip status | Label | Classes | Icon |
+|---|---|---|---|
+| DRAFT | Draft | `bg-sand-100 text-ink-700` | `PencilLine` |
+| PLANNING | Planning… | `bg-lagoon-50 text-lagoon-700` | `Loader2` (spin) |
+| CHOOSING | Choose a plan | `bg-lagoon-600 text-white` | `Columns3` (the user's turn, so it's the strongest pill) |
+| Post-choice status (whatever backend-dev names it, e.g. `CONFIRMED`/`READY`) | **Plan ready** | `bg-success-50 text-success-700` | `CheckCircle2` |
+| NEEDS_ATTENTION | Needs your input | `bg-warning-50 text-warning-700` | `AlertTriangle` |
+| COMPLETED | Completed | `bg-sand-100 text-ink-700` | `Flag` |
+| legacy `BOOKING` on old trips, or unknown | "Plan ready" if an itinerary exists, otherwise the raw status | `bg-sand-100 text-ink-700` | `Circle` |
+
+Don't label the post-choice state "Confirmed" or "Booked". Nothing has been booked
+until the user does it on the provider's site.
+
+### 4.7 "Book it yourself" link-out (new, replaces all booking states)
+
+One component, `components/BookLink.tsx`, used on every bookable item in the chosen
+itinerary. Data it needs per item: a provider display name (e.g. "Google Flights") and
+the deterministic URL from backend-dev. Optionally it takes a short human summary of what
+the search will look for (e.g. "LIS → MEX · Mar 10").
+
+- **Element:** a real `<a href target="_blank" rel="noopener noreferrer">`, never a button
+  with JS navigation, so middle-click, copy-link and "open in new tab" all work.
+- **Look:** secondary-button styling: `inline-flex items-center gap-1.5 rounded-xl bg-white
+  px-3.5 py-2 text-sm font-semibold text-lagoon-700 ring-1 ring-inset ring-sand-400
+  hover:bg-lagoon-50 hover:ring-lagoon-600` with the standard focus ring. It's deliberately
+  *not* the solid primary button: a day can have several of these, and a column of solid
+  teal blocks would shout.
+- **Text:** "Search on {Provider}", then the `ExternalLink` icon (16px, `aria-hidden`), then
+  `<span class="sr-only">(opens in a new tab)</span>`. Examples: "Search on Google
+  Flights", "Search on Booking.com", "Search on Viator". Use the lucide icon rather than a
+  "↗" glyph, which screen readers read out inconsistently. Say "Search", not "Book now",
+  because the link opens a prefilled search. Price and availability are the provider's,
+  and the copy shouldn't promise more.
+- **Eyebrow above the first link in a row group** (or as a row label on mobile): "Book it
+  yourself", caption, ink-500.
+- **What-it-searches line** (if the summary is provided): caption ink-500 under the link,
+  tabular-nums, e.g. "LIS → MEX · Tue, Mar 10 · 2 adults". The user can check the prefill
+  before leaving the app, which keeps the honesty principle visible.
+- **No link available** (e.g. missing dates or origin, so no deterministic link can be
+  built): don't render a disabled button or a link that guesses. Show
+  `text-sm text-ink-500` with an `Unlink` icon: "No search link: missing
+  travel dates". Name the missing detail when backend provides it. If the revise dock
+  exists, append "Add them below."
+- **Never** render a URL that came from model output, even as a fallback. If backend
+  marks a link as missing, the UI shows the no-link state, full stop.
+- **Option cards (CHOOSING):** no links on the cards. Links appear only after a plan is
+  chosen, so the comparison stays a comparison. The "4 to book yourself" fact sets the
+  expectation.
+
+### 4.8 Per-day "things to book" checklist (optional, v2)
+
+A self-tracked checklist so the user can see what they've already booked elsewhere.
+**We can't verify any of it, and the visuals must not pretend we can.**
+
+- **Placement:** inside each day card, under the activities, only when the day has bookable
+  items. It's a `rounded-xl bg-sand-50 p-4` box with a heading "Things to book" (eyebrow
+  ink-500) and a counter on the right, "1 of 2 done" (caption, tabular-nums).
+- **Rows:** a native checkbox (`h-5 w-5 rounded border-sand-400 text-lagoon-600
+  focus-visible:ring-lagoon-600`, styled via `accent-color: #0E6B66` or `@tailwindcss/forms`),
+  a label with the item name and kind icon, and that item's `BookLink` on the right. The whole label is
+  clickable, with ≥44px row height.
+- **Checked state:** the row text goes to ink-500, and a small caption appears: `Check`
+  icon + "You marked this booked". **No strikethrough and no success-green "Booked"
+  pill.** The wording makes clear it's the user's own note. The link stays available in
+  case they need it again.
+- **Trip-level summary (optional):** in the header meta row, "3 of 7 things booked (your
+  checklist)".
+- **Persistence:** v2 decision for backend-dev. Either a per-activity `userMarkedBooked`
+  boolean via API, or `localStorage` keyed by trip + activity id as a stopgap. If
+  localStorage, add a caption "Saved on this device" so nobody expects it on their phone.
+- **Motion:** checkbox tick only, 150ms, motion-safe. No celebration.
 
 ---
 
@@ -531,7 +615,7 @@ there's always a word *and* an icon. Labels stay as they are today.
   `outline-none` without a replacement (today's inputs remove the outline and only shift
   a border shade).
 - Color is never the only signal. Tiers have icon + eyebrow, statuses have icon + word, and
-  pending budget is striped.
+  estimates are always striped.
 - Touch targets are ≥ 44px tall on mobile (chips `py-2` + 14px text ≈ 38px, so use `py-2.5`
   on `<sm`).
 - `aria-live="polite"` on notifications and on the status banner, `role="alert"` on
@@ -565,29 +649,49 @@ there's always a word *and* an icon. Labels stay as they are today.
    "Pace: …", named places + RatingBadge restyle, honesty notes at `text-sm`, choosing
    and locked states, info vs danger alert tone. **Ship with the neutral header** until
    backend-dev persists `variant`.
-8. Trip header band + BudgetBar redesign (two-segment bar, legend, over-budget state).
-9. Clarification card (sunset, not amber) with focus management.
+8. Trip header band + BudgetBar redesign as **estimate-only** (striped fill, "~" figures,
+   always-visible "not live prices" footnote, warning-tone over-estimate state).
+9. `BookLink` component (§4.7) and the itinerary rows that use it: provider name,
+   `ExternalLink` icon, new tab, sr-only "(opens in a new tab)", what-it-searches line,
+   and the honest no-link state. This is the product's main action now, so it's P1.
+10. Clarification card (sunset, not amber) with focus management.
 
 **P2: the rest of the dashboard:**
-10. Itinerary timeline with kind icons, per-row failure reason, awaiting-confirmation row
-    tint.
-11. Notifications as an icon list with relative times, unread badge, `aria-live`.
-12. All empty/loading/error states from §4.5 (skeletons that mirror real layouts).
-13. Motion pass: hover lift, enter fade/rise, budget width transition. All
+11. Itinerary timeline with kind icons, bookable-row tint and per-day "N to book" chip.
+    Remove per-row booking pills and the booking banners.
+12. Notifications as an icon list with relative times, unread badge, `aria-live`, and
+    legacy kinds falling back to the GENERAL tile.
+13. All empty/loading/error states from §4.5 (skeletons that mirror real layouts).
+14. Remove leftover booking copy app-wide: "Starting bookings…", "booking is underway",
+    "nothing is being booked yet", "Real prices come from the provider when we book",
+    plus the booking statuses in `StatusPill`.
+15. Motion pass: hover lift, enter fade/rise, budget width transition. All
     `motion-safe:`. Verify with the OS "reduce motion" setting on.
 
+**Optional / v2:**
+16. Per-day "Things to book" checklist (§4.8). It needs a persistence decision from
+    backend-dev (API field vs localStorage + "Saved on this device").
+
 **Dependencies / other owners:**
-- **backend-dev:** persist and return the option `variant` key (§4.3 callout). This
-  unblocks the tier colors in item 7.
+- **backend-dev:**
+  - Persist and return the option `variant` key (§4.3 callout). This unblocks the tier
+    colors in item 7.
+  - For each bookable item, expose: provider display name, deterministic URL (or an
+    explicit "no link" plus the missing field), and optionally a short search summary.
+  - Expose the chosen option's estimate to `BudgetBar`.
+  - Tell frontend-dev the name of the post-choice trip status.
 - **revision-flow branch:** build the persistent revise dock to the §4.3 spec in every
   trip status. frontend-dev should add the `pb-32` page padding now.
 - **qa-tester:** check every state in §4.5 and §4.6 renders, not just the happy path
-  (including NOT_CONFIGURED ratings, FAILED bookings, over budget, 409, and the options
-  fetch error), at 375px and 1280px, with reduce-motion on, plus a keyboard-only pass
-  through landing → choose.
+  (including NOT_CONFIGURED ratings, estimate over budget, 409, bookable items with no
+  link, and the options fetch error), at 375px and 1280px, with reduce-motion on, plus a
+  keyboard-only pass through landing → choose → opening a "Search on …" link. Also verify
+  that every rendered link URL comes from the deterministic builder, never from model
+  text.
 
 ## 7. Out of scope for this pass
 - Dark mode. Tokens are named by role so a dark set can be added later.
+- Any payment, checkout or in-app booking UI. The product no longer books or charges.
 - Destination photography, maps or illustrations. Revisit only with a licensed source
   (e.g. a provider's own property images under their terms) and only where the image is
   of the actual place being booked.
