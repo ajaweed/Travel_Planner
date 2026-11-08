@@ -283,3 +283,11 @@ with links). Google Flights/Hotels/Maps links return 200 and Booking.com 202 to 
 GetYourGuide and Viator 403 scripted requests (bot protection), so those two still need a
 real-browser click check -- qa-tester. Handoff: frontend-dev (restyle per visual spec);
 backend-dev still owes the option `variant` field the visual spec is blocked on.
+`/code-review` (medium) on `backend-dev/link-out-booking` raised 9 findings; 8 fixed in
+the follow-up commit (multi-city destination per item via `destinationFor`; only a
+final-day flight is the round-trip return, mid-trip legs get their own search; null-safe
+stored params; ISO fallback for trip dates; no links banner on nothing-to-book plans;
+legacy BOOKING copy; LINK_OUT-only link building + parallel queries; stale comments).
+Deliberately not done: deleting BookingAgent / `bookingTools.ts` / `recordBudgetEntry`
+-- kept unwired on purpose (decisions log). 56 tests, typecheck, build pass. Merged to
+`main` and pushed. Reviewed by `/code-review`.
