@@ -19,7 +19,9 @@ import {
   getPlaceResults,
   looksLikePhoto,
   placeLabel,
+  readPage,
 } from "./destinationPhoto";
+import { ttlCache } from "./ttlCache";
 import { WIKIPEDIA_API, WikimediaUnavailable, wikiQuery } from "./wikimedia";
 
 export type Stop = {
@@ -192,17 +194,13 @@ async function findCandidates(query: string, stop: Stop, cityCoords: Coords): Pr
   const stopText = `${stop.title} ${stop.description ?? ""}`;
   const cityName = placeLabel(stop.city!);
   const out: Candidate[] = [];
-  for (const p of pages) {
-    const title: unknown = p?.title;
-    const image: unknown = p?.pageimage;
-    const c = p?.coordinates?.[0];
-    if (typeof title !== "string" || typeof image !== "string") continue;
-    if (p.pageprops?.disambiguation !== undefined || !looksLikePhoto(image)) continue;
-    if (tokens(title).join(" ") === tokens(cityName).join(" ")) continue; // the city itself
-    if (!c || !Number.isFinite(c.lat) || !Number.isFinite(c.lon)) continue;
-    if (distanceKm(cityCoords, { lat: c.lat, lon: c.lon }) > MAX_DISTANCE_KM) continue;
-    if (!titleMatches(title, stopText, cityName)) continue;
-    out.push({ title, image });
+  for (const raw of pages) {
+    const page = readPage(raw);
+    if (!page?.image || !page.coords || page.disambiguation || !looksLikePhoto(page.image)) continue;
+    if (tokens(page.title).join(" ") === tokens(cityName).join(" ")) continue; // the city itself
+    if (distanceKm(cityCoords, page.coords) > MAX_DISTANCE_KM) continue;
+    if (!titleMatches(page.title, stopText, cityName)) continue;
+    out.push({ title: page.title, image: page.image });
   }
   return out;
 }
@@ -211,48 +209,51 @@ async function findCandidates(query: string, stop: Stop, cityCoords: Coords): Pr
 
 const HIT_TTL_MS = 24 * 60 * 60 * 1000;
 const MISS_TTL_MS = 60 * 60 * 1000;
-const MAX_ENTRIES = 2000;
-type Entry = { expires: number; photo: Omit<DestinationPhoto, "place"> | null };
-const gs = globalThis as unknown as { __tripPlannerStopCache?: Map<string, Entry> };
-function stopCache(): Map<string, Entry> {
-  return (gs.__tripPlannerStopCache ??= new Map());
-}
+// One trip load may spend at most this many searches; the rest of its stops
+// are looked up on later visits (they stay uncached until then). Keeps one
+// long itinerary from eating the shared per-minute Wikimedia budget.
+export const MAX_SEARCHES_PER_CALL = 24;
+const stopCache = ttlCache<Omit<DestinationPhoto, "place"> | null>("stops", 2000);
 
 /** Test-only. */
 export function resetStopPhotoCache(): void {
-  gs.__tripPlannerStopCache = undefined;
+  stopCache.clear();
+}
+
+/** The match depends on title, description and city, so all three are in the key. */
+function stopKey(stop: Stop): string {
+  return [stop.title, stop.description ?? "", stop.city ?? ""].map((x) => x.trim().toLowerCase()).join("|");
 }
 
 /**
  * Photos for itinerary stops, keyed by stop id. Stops without a confident
- * match are absent. Never throws: when Wikimedia is unavailable the affected
- * stops are simply absent and NOT cached, so a later call retries them.
+ * match are absent. Never throws: when Wikimedia is unavailable (or this
+ * call's search budget runs out) the affected stops are simply absent and NOT
+ * cached, so a later call retries them.
  */
 export async function getStopPhotos(stops: Stop[], now: number = Date.now()): Promise<Map<string, DestinationPhoto>> {
   const out = new Map<string, DestinationPhoto>();
   const withQuery = stops.flatMap((s) => {
     const queries = stopQueries(s);
-    return queries.length ? [{ stop: s, queries, key: `${s.title.trim().toLowerCase()}|${s.city!.trim().toLowerCase()}` }] : [];
+    return queries.length ? [{ stop: s, queries, key: stopKey(s) }] : [];
   });
-  if (withQuery.length === 0) return out;
-
-  const cache = stopCache();
-  const todo = withQuery.filter(({ key }) => {
-    const hit = cache.get(key);
-    return !(hit && now < hit.expires);
-  });
+  const todo = [...new Map(withQuery.map((t) => [t.key, t])).values()].filter(
+    ({ key }) => stopCache.get(key, now) === undefined,
+  );
 
   if (todo.length > 0) {
     let places: Awaited<ReturnType<typeof getPlaceResults>>;
     try {
-      places = await getPlaceResults([...new Set(todo.map((t) => t.stop.city!))]);
+      // Cities come from our own trip data: not subject to the public cap.
+      places = await getPlaceResults([...new Set(todo.map((t) => t.stop.city!))], { now });
     } catch {
       places = new Map();
     }
-    const found = new Map<string, Candidate[]>(); // by cache key; absent = unavailable
-    const uniqueTodo = [...new Map(todo.map((t) => [t.key, t])).values()];
+
+    let budget = MAX_SEARCHES_PER_CALL;
+    const found = new Map<string, Candidate[]>(); // by cache key; absent = not looked up
     await Promise.all(
-      uniqueTodo.map(async ({ stop, queries, key }) => {
+      todo.map(async ({ stop, queries, key }) => {
         const coords = places.get(stop.city!.trim())?.coords;
         if (!coords) return; // can't verify location: unknown, not a miss
         try {
@@ -261,6 +262,8 @@ export async function getStopPhotos(stops: Stop[], now: number = Date.now()): Pr
           // to be freely licensed falls through to the next.
           let cands: Candidate[] = [];
           for (const q of queries) {
+            if (budget <= 0) return; // out of budget: leave uncached for next time
+            budget--;
             cands = await findCandidates(q, stop, coords);
             if (cands.length) break;
           }
@@ -286,14 +289,13 @@ export async function getStopPhotos(stops: Stop[], now: number = Date.now()): Pr
       if (cands.length && !creditsOk) continue; // licenses unknown right now: retry later
       const cand = cands.find((c) => credits.has(c.image));
       const photo = cand ? { subject: cand.title, ...credits.get(cand.image)! } : null;
-      if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value!);
-      cache.set(key, { expires: now + (photo ? HIT_TTL_MS : MISS_TTL_MS), photo });
+      stopCache.set(key, photo, photo ? HIT_TTL_MS : MISS_TTL_MS, now);
     }
   }
 
   for (const { stop, key } of withQuery) {
-    const hit = cache.get(key);
-    if (hit?.photo) out.set(stop.id, { ...hit.photo, place: stop.title });
+    const photo = stopCache.get(key, now);
+    if (photo) out.set(stop.id, { ...photo, place: stop.title });
   }
   return out;
 }

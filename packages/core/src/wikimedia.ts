@@ -30,7 +30,7 @@ export class WikimediaUnavailable extends Error {}
 
 type LimiterState = {
   inFlight: number;
-  waiters: Array<() => void>;
+  waiters: Array<() => void>; // parked acquire() calls; each removes itself when woken
   sent: number[]; // timestamps of requests in the last minute
   blockedUntil: number;
   backoffMs: number;
@@ -60,49 +60,83 @@ export function userAgent(): string {
   return `TripPlannerAI/0.1 (${contact}) bot`;
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(new WikimediaUnavailable("aborted"));
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => {
-      clearTimeout(t);
-      reject(new WikimediaUnavailable("aborted"));
-    });
-  });
-}
+// Every request gets its own timeout, and nobody waits long for a slot: these
+// lookups run inside users' page requests, and a photo is never worth a hang.
+export const REQUEST_TIMEOUT_MS = 8_000;
+export const MAX_QUEUE_WAIT_MS = 5_000;
 
+/**
+ * Waits for a slot (fewer than MAX_IN_FLIGHT running, budget left this
+ * minute). Throws WikimediaUnavailable instead of waiting past
+ * MAX_QUEUE_WAIT_MS, while blocked by a 429, or once `signal` aborts.
+ */
 async function acquire(signal?: AbortSignal): Promise<void> {
   const s = state();
+  const deadline = Date.now() + MAX_QUEUE_WAIT_MS;
+  // Giving up after being woken for a free slot: hand the wakeup on.
+  const fail = (why: string) => {
+    if (s.inFlight < MAX_IN_FLIGHT) s.waiters[0]?.();
+    return new WikimediaUnavailable(why);
+  };
   for (;;) {
-    if (Date.now() < s.blockedUntil) throw new WikimediaUnavailable("rate limited by Wikimedia");
-    if (signal?.aborted) throw new WikimediaUnavailable("aborted");
-    if (s.inFlight >= MAX_IN_FLIGHT) {
-      await new Promise<void>((resolve) => s.waiters.push(resolve));
-      continue;
-    }
     const now = Date.now();
+    if (now < s.blockedUntil) throw fail("rate limited by Wikimedia");
+    if (signal?.aborted) throw fail("aborted");
     s.sent = s.sent.filter((t) => now - t < 60_000);
-    if (s.sent.length >= REQUESTS_PER_MINUTE) {
-      // Wait for the oldest request to leave the window.
-      await sleep(60_000 - (now - s.sent[0]!) + 5, signal);
-      continue;
+    const budgetWait = s.sent.length >= REQUESTS_PER_MINUTE ? 60_000 - (now - s.sent[0]!) + 5 : 0;
+    if (s.inFlight < MAX_IN_FLIGHT && budgetWait === 0) {
+      s.sent.push(now);
+      s.inFlight++;
+      return;
     }
-    s.sent.push(now);
-    s.inFlight++;
-    return;
+    const wait = Math.min(budgetWait || Infinity, deadline - now);
+    if (wait <= 0 || now + budgetWait > deadline) throw fail("busy: request budget used up");
+    // Park until a slot frees (release), the budget window moves, the
+    // deadline passes or the caller aborts -- whichever comes first. Every
+    // exit removes us from the queue, so no wakeup is ever lost on a waiter
+    // that has already given up.
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", done);
+        const i = s.waiters.indexOf(done);
+        if (i >= 0) s.waiters.splice(i, 1);
+        resolve();
+      };
+      const timer = setTimeout(done, wait);
+      signal?.addEventListener("abort", done);
+      s.waiters.push(done);
+    });
   }
 }
 
 function release(): void {
   const s = state();
   s.inFlight--;
-  s.waiters.shift()?.();
+  s.waiters[0]?.();
+}
+
+/** Wakes every waiter, e.g. after a 429, so they fail fast instead of parking. */
+function wakeAll(): void {
+  for (const w of [...state().waiters]) w();
+}
+
+function withTimeout(signal: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  if (!signal) return timeout;
+  const ctrl = new AbortController();
+  for (const sig of [signal, timeout]) {
+    if (sig.aborted) ctrl.abort();
+    else sig.addEventListener("abort", () => ctrl.abort(), { once: true });
+  }
+  return ctrl.signal;
 }
 
 /**
  * GET api.php with the given query params (format/formatversion added).
- * Throws WikimediaUnavailable when rate-limited, aborted or failing; callers
- * treat that as "no photo right now" and must not cache it as a real miss.
+ * Throws WikimediaUnavailable when rate-limited, busy, timed out, aborted or
+ * failing; callers treat that as "no photo right now" and must not cache it
+ * as a real miss.
  */
 export async function wikiQuery(api: string, params: Record<string, string>, signal?: AbortSignal): Promise<any> {
   const s = state();
@@ -112,7 +146,7 @@ export async function wikiQuery(api: string, params: Record<string, string>, sig
   try {
     const res = await fetchFn(`${api}?${qs}`, {
       headers: { "User-Agent": userAgent(), "Api-User-Agent": userAgent() },
-      signal,
+      signal: withTimeout(signal),
       // Next's server fetch cache would otherwise keep answers forever.
       cache: "no-store",
     });
@@ -120,6 +154,7 @@ export async function wikiQuery(api: string, params: Record<string, string>, sig
       const retryAfter = Number(res.headers?.get("retry-after"));
       s.backoffMs = Math.min(Math.max(s.backoffMs * 2, 5_000), 10 * 60_000);
       s.blockedUntil = Date.now() + (retryAfter > 0 ? retryAfter * 1000 : s.backoffMs);
+      wakeAll();
       throw new WikimediaUnavailable(`Wikimedia returned ${res.status}`);
     }
     if (!res.ok) throw new WikimediaUnavailable(`Wikimedia returned ${res.status}`);

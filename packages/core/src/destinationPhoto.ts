@@ -8,6 +8,7 @@
 // request covers up to 50 places) and go through ./wikimedia's shared limiter.
 
 import { photoCacheKey, placeLabel } from "./placeNames";
+import { ttlCache } from "./ttlCache";
 import { WIKIPEDIA_API, WIKIVOYAGE_API, WikimediaUnavailable, wikiQuery } from "./wikimedia";
 
 export type DestinationPhoto = {
@@ -108,7 +109,8 @@ export type PageInfo = {
   disambiguation: boolean;
 };
 
-function readPage(p: any): PageInfo | null {
+/** Reads one Action API page object (pageimages/pageprops/coordinates); null if missing/invalid. */
+export function readPage(p: any): PageInfo | null {
   if (!p || p.missing || p.invalid || typeof p.title !== "string") return null;
   const c = p.coordinates?.[0];
   return {
@@ -241,7 +243,7 @@ export async function lookupDestinationPhotos(places: string[], signal?: AbortSi
   return results;
 }
 
-/** Single-place convenience; null on any failure. */
+/** Single-place convenience (tests and scripts); null on any failure. */
 export async function lookupDestinationPhoto(place: string): Promise<DestinationPhoto | null> {
   try {
     return (await lookupDestinationPhotos([place.trim()])).get(place.trim())?.photo ?? null;
@@ -254,84 +256,108 @@ export async function lookupDestinationPhoto(place: string): Promise<Destination
 
 const HIT_TTL_MS = 24 * 60 * 60 * 1000;
 const MISS_TTL_MS = 10 * 60 * 1000; // a miss may be a fresh article or a fixed license
-const MAX_ENTRIES = 1000;
-// The photos endpoint is public: cap how many *new* places can be looked up
-// per minute so a script feeding it random names can't spend the shared
-// Wikimedia budget that real trips need.
+// The photos endpoint is public: cap how many *new* places it can look up per
+// minute, so a script feeding it random names can't spend the Wikimedia
+// budget real trips need. Trip routes (places from our own DB) aren't capped.
 export const MAX_COLD_LOOKUPS_PER_MINUTE = 60;
 
-type Entry = { expires: number; value: PlaceResult };
-type Cache = { entries: Map<string, Entry>; cold: { start: number; count: number } };
-const gc = globalThis as unknown as { __tripPlannerPlaceCache?: Cache };
-function cache(): Cache {
-  return (gc.__tripPlannerPlaceCache ??= { entries: new Map(), cold: { start: 0, count: 0 } });
+const placeCache = ttlCache<PlaceResult>("places", 1000);
+type Shared = { cold: { start: number; count: number }; inflight: Map<string, Promise<PlaceResult | undefined>> };
+const gs = globalThis as unknown as { __tripPlannerPlaceShared?: Shared };
+function shared(): Shared {
+  return (gs.__tripPlannerPlaceShared ??= { cold: { start: 0, count: 0 }, inflight: new Map() });
 }
 
-/** Test-only: clears the place cache and the cold-lookup window. */
+/** Test-only: clears the place cache, in-flight lookups and the cold-lookup window. */
 export function resetDestinationPhotoCache(): void {
-  gc.__tripPlannerPlaceCache = undefined;
+  placeCache.clear();
+  gs.__tripPlannerPlaceShared = undefined;
 }
+
+export type PlaceLookupOptions = {
+  /** Apply the public endpoint's cold-lookup cap. */
+  capped?: boolean;
+  lookup?: (places: string[]) => Promise<Map<string, PlaceResult>>;
+  now?: number;
+};
 
 /**
- * Cached `lookupDestinationPhotos`: 24h for hits, 10min for misses, nothing
- * cached when Wikimedia was unavailable or the cold-lookup cap was hit (those
- * places come back as { photo: null } and get a real lookup next time).
- * Each photo carries the caller's own spelling of the place.
+ * Cached `lookupDestinationPhotos`: 24h for hits, 10min for misses. Concurrent
+ * callers share one in-flight lookup per place. Nothing is cached when
+ * Wikimedia was unavailable or the cap refused a place -- those come back as
+ * { photo: null } and get a real lookup next time. Each photo carries the
+ * caller's own spelling of the place.
  */
 export async function getPlaceResults(
   places: string[],
-  lookup: (places: string[]) => Promise<Map<string, PlaceResult>> = lookupDestinationPhotos,
-  now: number = Date.now(),
+  { capped = false, lookup = lookupDestinationPhotos, now = Date.now() }: PlaceLookupOptions = {},
 ): Promise<Map<string, PlaceResult>> {
-  const c = cache();
-  const out = new Map<string, PlaceResult>();
+  const sh = shared();
+  const unique = [...new Map(places.map((p) => p.trim()).filter(Boolean).map((p) => [p, p])).keys()];
+  const pending = new Map<string, Promise<PlaceResult | undefined>>(); // by cache key
   const toFetch: string[] = [];
-  for (const raw of places) {
-    const place = raw.trim();
-    if (!place || out.has(place)) continue;
-    const hit = c.entries.get(photoCacheKey(place));
-    if (hit && now < hit.expires) {
-      out.set(place, { ...hit.value, photo: hit.value.photo && { ...hit.value.photo, place } });
-    } else {
-      out.set(place, { photo: null });
-      if (!toFetch.some((p) => photoCacheKey(p) === photoCacheKey(place))) toFetch.push(place);
+  const seen = new Set<string>();
+  for (const place of unique) {
+    const key = photoCacheKey(place);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (placeCache.get(key, now)) continue;
+    const inflight = sh.inflight.get(key);
+    if (inflight) pending.set(key, inflight);
+    else toFetch.push(place);
+  }
+
+  let allowed = toFetch;
+  if (capped) {
+    if (now - sh.cold.start >= 60_000) sh.cold = { start: now, count: 0 };
+    allowed = toFetch.slice(0, Math.max(0, MAX_COLD_LOOKUPS_PER_MINUTE - sh.cold.count));
+    sh.cold.count += allowed.length;
+  }
+
+  if (allowed.length > 0) {
+    const batch = lookup(allowed).then(
+      (fetched) => {
+        for (const place of allowed) {
+          const value = fetched.get(place) ?? { photo: null };
+          placeCache.set(photoCacheKey(place), value, value.photo ? HIT_TTL_MS : MISS_TTL_MS, now);
+        }
+        return fetched;
+      },
+      (err) => {
+        // Unavailable isn't the caller's fault: give the cap back.
+        if (capped) sh.cold.count = Math.max(0, sh.cold.count - allowed.length);
+        if (err instanceof WikimediaUnavailable) return new Map<string, PlaceResult>();
+        throw err;
+      },
+    );
+    for (const place of allowed) {
+      const key = photoCacheKey(place);
+      const p = batch.then((m) => m.get(place));
+      sh.inflight.set(key, p);
+      pending.set(key, p);
+      void p.finally(() => {
+        if (sh.inflight.get(key) === p) sh.inflight.delete(key);
+      }).catch(() => {});
     }
   }
 
-  if (now - c.cold.start >= 60_000) c.cold = { start: now, count: 0 };
-  const allowed = toFetch.slice(0, Math.max(0, MAX_COLD_LOOKUPS_PER_MINUTE - c.cold.count));
-  c.cold.count += allowed.length;
-  if (allowed.length === 0) return out;
+  const settled = new Map<string, PlaceResult | undefined>();
+  await Promise.all([...pending].map(async ([key, p]) => settled.set(key, await p)));
 
-  let fetched: Map<string, PlaceResult>;
-  try {
-    fetched = await lookup(allowed);
-  } catch (err) {
-    if (err instanceof WikimediaUnavailable) return out;
-    throw err;
-  }
-  for (const place of allowed) {
-    const value = fetched.get(place) ?? { photo: null };
-    if (c.entries.size >= MAX_ENTRIES) c.entries.delete(c.entries.keys().next().value!);
-    c.entries.set(photoCacheKey(place), { expires: now + (value.photo ? HIT_TTL_MS : MISS_TTL_MS), value });
-  }
-  for (const place of out.keys()) {
+  const out = new Map<string, PlaceResult>();
+  for (const place of unique) {
     const key = photoCacheKey(place);
-    const match = allowed.find((p) => photoCacheKey(p) === key);
-    if (!match) continue;
-    const value = fetched.get(match) ?? { photo: null };
+    const value = placeCache.get(key, now) ?? settled.get(key) ?? { photo: null };
     out.set(place, { ...value, photo: value.photo && { ...value.photo, place } });
   }
   return out;
 }
 
-/** Photos for many places (cached). */
-export async function getDestinationPhotos(places: string[]): Promise<Map<string, DestinationPhoto | null>> {
-  const results = await getPlaceResults(places);
+/** Photos for many places (cached). Pass `capped` for untrusted (public) input. */
+export async function getDestinationPhotos(
+  places: string[],
+  opts: { capped?: boolean } = {},
+): Promise<Map<string, DestinationPhoto | null>> {
+  const results = await getPlaceResults(places, opts);
   return new Map([...results].map(([p, r]) => [p, r.photo]));
-}
-
-/** Photo for one place (cached). */
-export async function getDestinationPhoto(place: string): Promise<DestinationPhoto | null> {
-  return (await getDestinationPhotos([place])).get(place.trim()) ?? null;
 }

@@ -57,19 +57,58 @@ describe("wikiQuery", () => {
     await expect(wikiQuery(WIKIPEDIA_API, {})).rejects.toBeInstanceOf(WikimediaUnavailable);
   });
 
-  it("keeps under the per-minute budget", async () => {
+  it("keeps under the per-minute budget, failing fast rather than waiting a minute", async () => {
     let calls = 0;
     setWikimediaFetch(async () => {
       calls++;
       return ok();
     });
-    const ctrl = new AbortController();
-    const all = Array.from({ length: REQUESTS_PER_MINUTE + 3 }, () =>
-      wikiQuery(WIKIPEDIA_API, {}, ctrl.signal).catch(() => "waited"),
+    const t0 = Date.now();
+    const all = await Promise.all(
+      Array.from({ length: REQUESTS_PER_MINUTE + 3 }, () => wikiQuery(WIKIPEDIA_API, {}).then(() => "ok", () => "busy")),
     );
-    await new Promise((r) => setTimeout(r, 50));
     expect(calls).toBe(REQUESTS_PER_MINUTE);
-    ctrl.abort(); // release the ones waiting for the window
-    expect((await Promise.all(all)).filter((x) => x === "waited")).toHaveLength(3);
+    expect(all.filter((x) => x === "busy")).toHaveLength(3);
+    expect(Date.now() - t0).toBeLessThan(2000);
+  });
+
+  it("a 429 releases everyone waiting for a slot (review fix: no lost wakeups)", async () => {
+    let n = 0;
+    setWikimediaFetch(async () => {
+      n++;
+      await new Promise((r) => setTimeout(r, 5));
+      return { ok: false, status: 429, headers: { get: () => "60" }, json: async () => ({}) };
+    });
+    const t0 = Date.now();
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => wikiQuery(WIKIPEDIA_API, {}).then(() => "ok", () => "failed")),
+    );
+    expect(results.every((r) => r === "failed")).toBe(true);
+    expect(n).toBe(3); // only the first three ever reached Wikimedia
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it("every request carries a timeout signal (review fix)", async () => {
+    let signal: AbortSignal | undefined;
+    setWikimediaFetch(async (_u, init) => {
+      signal = init?.signal;
+      return ok();
+    });
+    await wikiQuery(WIKIPEDIA_API, {});
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal!.aborted).toBe(false);
+  });
+
+  it("an aborted caller stops waiting", async () => {
+    setWikimediaFetch(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+      return ok();
+    });
+    const ctrl = new AbortController();
+    const running = Array.from({ length: 3 }, () => wikiQuery(WIKIPEDIA_API, {}));
+    const waiting = wikiQuery(WIKIPEDIA_API, {}, ctrl.signal);
+    ctrl.abort();
+    await expect(waiting).rejects.toBeInstanceOf(WikimediaUnavailable);
+    await Promise.all(running);
   });
 });

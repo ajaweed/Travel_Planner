@@ -129,44 +129,71 @@ describe("getPlaceResults cache", () => {
 
   it("looks a place up once and gives each caller its own spelling", async () => {
     const lookup = vi.fn(found);
-    expect((await getPlaceResults(["lisbon"], lookup)).get("lisbon")?.photo?.place).toBe("lisbon");
-    expect((await getPlaceResults([" Lisbon "], lookup)).get("Lisbon")?.photo?.place).toBe("Lisbon");
+    expect((await getPlaceResults(["lisbon"], { lookup })).get("lisbon")?.photo?.place).toBe("lisbon");
+    expect((await getPlaceResults([" Lisbon "], { lookup })).get("Lisbon")?.photo?.place).toBe("Lisbon");
     expect(lookup).toHaveBeenCalledTimes(1);
   });
 
   it("batches the uncached places of one call into one lookup", async () => {
     const lookup = vi.fn(found);
-    await getPlaceResults(["A"], lookup);
-    await getPlaceResults(["A", "B", "C", "b"], lookup);
+    await getPlaceResults(["A"], { lookup });
+    await getPlaceResults(["A", "B", "C", "b"], { lookup });
     expect(lookup).toHaveBeenCalledTimes(2);
     expect(lookup.mock.calls[1]![0]).toEqual(["B", "C"]);
   });
 
   it("retries misses after 10 minutes", async () => {
     const lookup = vi.fn(async (ps: string[]) => new Map<string, PlaceResult>(ps.map((p) => [p, { photo: null }])));
-    await getPlaceResults(["Nowhere"], lookup, 0);
-    await getPlaceResults(["Nowhere"], lookup, 9 * 60_000);
+    await getPlaceResults(["Nowhere"], { lookup, now: 0 });
+    await getPlaceResults(["Nowhere"], { lookup, now: 9 * 60_000 });
     expect(lookup).toHaveBeenCalledTimes(1);
-    await getPlaceResults(["Nowhere"], lookup, 11 * 60_000);
+    await getPlaceResults(["Nowhere"], { lookup, now: 11 * 60_000 });
     expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it("concurrent callers share one in-flight lookup (review fix)", async () => {
+    const lookup = vi.fn(async (ps: string[]) => {
+      await new Promise((r) => setTimeout(r, 10));
+      return found(ps);
+    });
+    const [a, b] = await Promise.all([getPlaceResults(["Lisbon"], { lookup }), getPlaceResults(["lisbon", "Kyoto"], { lookup })]);
+    expect(a.get("Lisbon")?.photo?.place).toBe("Lisbon");
+    expect(b.get("lisbon")?.photo?.place).toBe("lisbon");
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(lookup.mock.calls[1]![0]).toEqual(["Kyoto"]);
+  });
+
+  it("the cap applies only to capped (public) callers, and is refunded when Wikimedia is unavailable", async () => {
+    const lookup = vi.fn(found);
+    const many = Array.from({ length: MAX_COLD_LOOKUPS_PER_MINUTE + 5 }, (_, i) => `p${i}`);
+    const r = await getPlaceResults(many, { lookup, now: 1000 });
+    expect([...r.values()].every((x) => x.photo)).toBe(true);
+
+    resetDestinationPhotoCache();
+    const failing = vi.fn(async (): Promise<Map<string, PlaceResult>> => {
+      throw new WikimediaUnavailable("429");
+    });
+    await getPlaceResults(many.slice(0, MAX_COLD_LOOKUPS_PER_MINUTE), { lookup: failing, now: 1000, capped: true });
+    const after = await getPlaceResults(["fresh"], { lookup, now: 1000, capped: true });
+    expect(after.get("fresh")?.photo).not.toBeNull();
   });
 
   it("doesn't cache when Wikimedia is unavailable", async () => {
     const lookup = vi.fn(async (): Promise<Map<string, PlaceResult>> => {
       throw new WikimediaUnavailable("429");
     });
-    expect((await getPlaceResults(["Lisbon"], lookup)).get("Lisbon")).toEqual({ photo: null });
-    await getPlaceResults(["Lisbon"], lookup);
+    expect((await getPlaceResults(["Lisbon"], { lookup })).get("Lisbon")).toEqual({ photo: null });
+    await getPlaceResults(["Lisbon"], { lookup });
     expect(lookup).toHaveBeenCalledTimes(2);
   });
 
   it("caps new places per minute, without caching the refusal", async () => {
     const lookup = vi.fn(found);
     const many = Array.from({ length: MAX_COLD_LOOKUPS_PER_MINUTE + 5 }, (_, i) => `place ${i}`);
-    const r = await getPlaceResults(many, lookup, 1000);
+    const r = await getPlaceResults(many, { lookup, now: 1000, capped: true });
     expect([...r.values()].filter((x) => x.photo)).toHaveLength(MAX_COLD_LOOKUPS_PER_MINUTE);
-    expect((await getPlaceResults(["place 0"], lookup, 2000)).get("place 0")?.photo).not.toBeNull();
-    expect((await getPlaceResults([many.at(-1)!], lookup, 62_000)).get(many.at(-1)!)?.photo).not.toBeNull();
+    expect((await getPlaceResults(["place 0"], { lookup, now: 2000, capped: true })).get("place 0")?.photo).not.toBeNull();
+    expect((await getPlaceResults([many.at(-1)!], { lookup, now: 62_000, capped: true })).get(many.at(-1)!)?.photo).not.toBeNull();
   });
 });
 

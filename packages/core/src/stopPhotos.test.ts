@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getStopPhotos, namedPlaces, resetStopPhotoCache, stopQueries, titleMatches, type Stop } from "./stopPhotos";
+import { MAX_SEARCHES_PER_CALL, getStopPhotos, namedPlaces, resetStopPhotoCache, stopQueries, titleMatches, type Stop } from "./stopPhotos";
 import { resetDestinationPhotoCache } from "./destinationPhoto";
 import { setWikimediaFetch } from "./wikimedia";
 import { fakeWikimedia, type FakeWiki } from "./__fixtures__/fakeWikimedia";
@@ -143,6 +143,30 @@ describe("getStopPhotos", () => {
     const again = use({ ...souks, search: { "Gold Dubai": ["Dubai Gold Souk"] } });
     expect((await getStopPhotos([stop])).get("s1")).toBeDefined();
     expect(again.calls.length).toBeGreaterThan(0);
+  });
+
+  it("the cache key includes the description (review fix)", async () => {
+    use({ ...souks, search: { "Gold Dubai": ["Dubai Gold Souk"] } });
+    await getStopPhotos([{ ...stop, description: "Gold first" }]);
+    setWikimediaFetch(null);
+    const fake = use({ ...souks, search: {} });
+    await getStopPhotos([{ ...stop, id: "s2", description: "Spices only" }]);
+    expect(fake.calls.some((u) => u.searchParams.get("generator") === "search")).toBe(true);
+  });
+
+  it("spends at most MAX_SEARCHES_PER_CALL searches; the rest stay uncached for next time", async () => {
+    const many: Stop[] = Array.from({ length: MAX_SEARCHES_PER_CALL + 6 }, (_, i) => ({
+      id: `s${i}`,
+      title: `Visit Place${String.fromCharCode(65 + (i % 26))}x${i} Gardens`,
+      city: "Dubai",
+    }));
+    const fake = use({});
+    await getStopPhotos(many);
+    const searches = () => fake.calls.filter((u) => u.searchParams.get("generator") === "search").length;
+    expect(searches()).toBe(MAX_SEARCHES_PER_CALL);
+    const before = searches();
+    await getStopPhotos(many);
+    expect(searches()).toBeGreaterThan(before);
   });
 
   it("makes no requests for stops that name nothing", async () => {

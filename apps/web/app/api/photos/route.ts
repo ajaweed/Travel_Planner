@@ -6,19 +6,21 @@ const MAX_PLACES = 12;
 const PLACE = /^[\p{L}\p{M}][\p{L}\p{M}\p{N} .,'’()&-]*$/u;
 
 // GET /api/photos?place=Lisbon&place=Kyoto -> { photos: { [place]: DestinationPhoto | null } }
+// Public, so lookups of new places are rate-capped (capped: true).
 // Freely licensed Wikimedia Commons photos of the places, with credits. One
 // batched lookup for all of them. A place maps to null (never an error) when
 // there's no suitable photo: photos are decoration. New lookups are also
 // rate-capped in core (getPlaceResults).
 export async function GET(req: NextRequest) {
-  const places = [...new Set(req.nextUrl.searchParams.getAll("place").map((p) => p.trim()))];
-  if (places.length === 0 || places.length > MAX_PLACES || places.some((p) => p.length > 100 || !PLACE.test(p))) {
-    return NextResponse.json(
-      { error: `1-${MAX_PLACES} place names required (max 100 characters each)` },
-      { status: 400 },
-    );
+  const requested = [...new Set(req.nextUrl.searchParams.getAll("place").map((p) => p.trim()))].filter(Boolean);
+  if (requested.length === 0 || requested.length > MAX_PLACES) {
+    return NextResponse.json({ error: `1-${MAX_PLACES} place names required` }, { status: 400 });
   }
-  const photos = await getDestinationPhotos(places);
+  // An odd name ("Sintra / Cascais") just gets no photo; it mustn't cost the
+  // rest of a batched request theirs.
+  const valid = requested.filter((p) => p.length <= 100 && PLACE.test(p));
+  const photos = new Map<string, unknown>(requested.map((p) => [p, null]));
+  for (const [place, photo] of await getDestinationPhotos(valid, { capped: true })) photos.set(place, photo);
   const anyMissing = [...photos.values()].some((p) => !p);
   return NextResponse.json(
     { photos: Object.fromEntries(photos) },
