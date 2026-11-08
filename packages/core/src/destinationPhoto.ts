@@ -25,7 +25,10 @@ export type DestinationPhoto = {
   sourceUrl: string;
 };
 
-type FetchLike = (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }) => Promise<{
+type FetchLike = (
+  url: string,
+  init?: { headers?: Record<string, string>; signal?: AbortSignal; cache?: "no-store" },
+) => Promise<{
   ok: boolean;
   json(): Promise<any>;
 }>;
@@ -38,7 +41,9 @@ const HEADERS = { "User-Agent": "TripPlannerAI/0.1 (destination photos)", "Api-U
 const WIDTH = 1920;
 // Wikimedia's standard thumbnail steps (other widths are rate-limited).
 const SRCSET_WIDTHS = [500, 960, 1280, 1920];
-const TIMEOUT_MS = 5000;
+// One deadline for the whole lookup (every request shares it), so a slow
+// Wikimedia can't hold a request open for long.
+const LOOKUP_DEADLINE_MS = 8000;
 
 // Lead images are sometimes a flag, map, logo or locator diagram. We only
 // want photographs.
@@ -47,6 +52,18 @@ const PHOTO_MIME = new Set(["image/jpeg", "image/webp"]);
 // Free licenses only. Non-free (fair-use) files live on en.wikipedia and
 // can't be reused here.
 const FREE_LICENSE = /^(cc[ -]?(by|zero|0)|cc0|public domain|pd\b|attribution)/i;
+// NonCommercial / NoDerivatives Creative Commons variants aren't free licenses.
+const RESTRICTED_LICENSE = /\b(nc|nd)\b/i;
+
+/** Normalised key for caching a place's photo (shared by server and client caches). */
+export function photoCacheKey(place: string): string {
+  return place.trim().toLowerCase();
+}
+
+/** The short name shown on a photo: "Lisbon" for "Lisbon, Portugal". */
+export function placeLabel(place: string): string {
+  return place.split(",")[0]!.trim() || place.trim();
+}
 
 /** Strips tags and entities from Commons' HTML metadata to plain text. */
 export function plainText(html: string | undefined): string {
@@ -76,15 +93,23 @@ export function buildSrcSet(src: string): string {
 export function candidateTitles(place: string): string[] {
   const full = place.trim();
   if (!full) return [];
-  const head = full.split(",")[0]!.trim();
+  const head = placeLabel(full);
   return head && head !== full ? [full, head] : [full];
 }
 
-async function leadImageName(api: string, title: string, fetchFn: FetchLike): Promise<string | undefined> {
+type Ctx = { fetchFn: FetchLike; signal: AbortSignal };
+
+// no-store: Next's server fetch cache would otherwise keep Wikimedia answers
+// with no expiry, overriding the TTLs below.
+function get(url: string, ctx: Ctx) {
+  return ctx.fetchFn(url, { headers: HEADERS, signal: ctx.signal, cache: "no-store" });
+}
+
+async function leadImageName(api: string, title: string, ctx: Ctx): Promise<string | undefined> {
   const url =
     `${api}?action=query&format=json&formatversion=2&redirects=1` +
     `&prop=pageimages|pageprops&piprop=name&titles=${encodeURIComponent(title)}`;
-  const res = await fetchFn(url, { headers: HEADERS, signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const res = await get(url, ctx);
   if (!res.ok) return undefined;
   const page = (await res.json())?.query?.pages?.[0];
   if (!page || page.missing || page.pageprops?.disambiguation !== undefined) return undefined;
@@ -92,13 +117,13 @@ async function leadImageName(api: string, title: string, fetchFn: FetchLike): Pr
   return typeof name === "string" && !NOT_A_PHOTO.test(name.replace(/_/g, " ")) ? name : undefined;
 }
 
-async function imageDetails(api: string, place: string, fileName: string, fetchFn: FetchLike): Promise<DestinationPhoto | null> {
+async function imageDetails(api: string, place: string, fileName: string, ctx: Ctx): Promise<DestinationPhoto | null> {
   const url =
     `${api}?action=query&format=json&formatversion=2&prop=imageinfo` +
     `&iiprop=url|mime|extmetadata&iiurlwidth=${WIDTH}` +
     `&iiextmetadatafilter=Artist|LicenseShortName|LicenseUrl|NonFree` +
     `&titles=${encodeURIComponent(`File:${fileName}`)}`;
-  const res = await fetchFn(url, { headers: HEADERS, signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const res = await get(url, ctx);
   if (!res.ok) return null;
   const page = (await res.json())?.query?.pages?.[0];
   const info = page?.imageinfo?.[0];
@@ -107,7 +132,7 @@ async function imageDetails(api: string, place: string, fileName: string, fetchF
   if (!info || page.imagerepository !== "shared" || !PHOTO_MIME.has(info.mime)) return null;
   const meta = info.extmetadata ?? {};
   const license = plainText(meta.LicenseShortName?.value);
-  if (meta.NonFree?.value === "true" || !FREE_LICENSE.test(license)) return null;
+  if (meta.NonFree?.value === "true" || !FREE_LICENSE.test(license) || RESTRICTED_LICENSE.test(license)) return null;
   const src: unknown = info.thumburl ?? info.url;
   const sourceUrl: unknown = info.descriptionurl;
   if (typeof src !== "string" || typeof sourceUrl !== "string") return null;
@@ -126,27 +151,32 @@ async function imageDetails(api: string, place: string, fileName: string, fetchF
   };
 }
 
+/** One source's photo for one title; null on any failure, so other sources still get tried. */
+async function fromSource(api: string, place: string, title: string, ctx: Ctx): Promise<DestinationPhoto | null> {
+  try {
+    const name = await leadImageName(api, title, ctx);
+    return name ? await imageDetails(api, place, name, ctx) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Looks up a freely licensed photo of `place`. Returns null when there isn't
  * a suitable one (no article, lead image is a flag/map, non-free license) or
  * on any network/API failure -- photos are decoration and must never break a
- * page.
+ * page. Sources are queried in parallel per title; Wikipedia wins ties.
  */
 export async function lookupDestinationPhoto(
   place: string,
   fetchFn: FetchLike = fetch as unknown as FetchLike,
 ): Promise<DestinationPhoto | null> {
-  try {
-    for (const title of candidateTitles(place)) {
-      for (const api of PHOTO_SOURCES) {
-        const name = await leadImageName(api, title, fetchFn);
-        if (!name) continue;
-        const photo = await imageDetails(api, place, name, fetchFn);
-        if (photo) return photo;
-      }
-    }
-  } catch {
-    // fall through
+  const ctx: Ctx = { fetchFn, signal: AbortSignal.timeout(LOOKUP_DEADLINE_MS) };
+  for (const title of candidateTitles(place)) {
+    if (ctx.signal.aborted) break;
+    const found = await Promise.all(PHOTO_SOURCES.map((api) => fromSource(api, place, title, ctx)));
+    const photo = found.find((p) => p !== null);
+    if (photo) return photo;
   }
   return null;
 }
@@ -155,21 +185,48 @@ const HIT_TTL_MS = 24 * 60 * 60 * 1000;
 // A miss may be a transient network failure, so it's retried sooner.
 const MISS_TTL_MS = 10 * 60 * 1000;
 const MAX_ENTRIES = 500;
+// The endpoint is public: cap uncached lookups so a script feeding it random
+// places can't make us hammer Wikimedia (and get this app blocked).
+export const MAX_COLD_LOOKUPS_PER_MINUTE = 30;
 const cache = new Map<string, { expires: number; value: Promise<DestinationPhoto | null> }>();
+let coldWindow = { start: 0, count: 0 };
 
-/** `lookupDestinationPhoto` with an in-process cache: 24h for hits, 10min for misses. */
-export function getDestinationPhoto(place: string): Promise<DestinationPhoto | null> {
-  const key = place.trim().toLowerCase();
+/**
+ * `lookupDestinationPhoto` with an in-process cache (24h for hits, 10min for
+ * misses) and a global cap on uncached lookups. Over the cap it returns null
+ * without caching, so the place gets a real lookup next time.
+ */
+export function getDestinationPhoto(
+  place: string,
+  lookup: (place: string) => Promise<DestinationPhoto | null> = lookupDestinationPhoto,
+  now: number = Date.now(),
+): Promise<DestinationPhoto | null> {
+  const trimmed = place.trim();
+  const key = photoCacheKey(trimmed);
+  // A cached photo is shared across callers; stamp each caller's own spelling on it.
+  const forCaller = (p: Promise<DestinationPhoto | null>) => p.then((photo) => photo && { ...photo, place: trimmed });
+
   const hit = cache.get(key);
-  if (hit && Date.now() < hit.expires) return hit.value;
+  if (hit && now < hit.expires) return forCaller(hit.value);
   cache.delete(key);
+
+  if (now - coldWindow.start >= 60_000) coldWindow = { start: now, count: 0 };
+  if (coldWindow.count >= MAX_COLD_LOOKUPS_PER_MINUTE) return Promise.resolve(null);
+  coldWindow.count++;
+
   if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value!);
-  const value = lookupDestinationPhoto(place.trim());
+  const value = lookup(trimmed);
   // Concurrent requests for the same place share this in-flight promise.
-  const entry = { expires: Date.now() + HIT_TTL_MS, value };
+  const entry = { expires: now + HIT_TTL_MS, value };
   cache.set(key, entry);
   void value.then((photo) => {
-    if (!photo) entry.expires = Date.now() + MISS_TTL_MS;
+    if (!photo) entry.expires = now + MISS_TTL_MS;
   });
-  return value;
+  return forCaller(value);
+}
+
+/** Test-only: clears the cache and the cold-lookup window. */
+export function resetDestinationPhotoCache(): void {
+  cache.clear();
+  coldWindow = { start: 0, count: 0 };
 }

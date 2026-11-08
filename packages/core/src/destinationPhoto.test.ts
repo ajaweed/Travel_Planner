@@ -1,5 +1,16 @@
-import { describe, expect, it } from "vitest";
-import { buildSrcSet, candidateTitles, lookupDestinationPhoto, plainText } from "./destinationPhoto";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  MAX_COLD_LOOKUPS_PER_MINUTE,
+  buildSrcSet,
+  candidateTitles,
+  getDestinationPhoto,
+  lookupDestinationPhoto,
+  photoCacheKey,
+  placeLabel,
+  plainText,
+  resetDestinationPhotoCache,
+  type DestinationPhoto,
+} from "./destinationPhoto";
 
 type PageImages = Record<string, { pageimage?: string; missing?: boolean; disambiguation?: boolean }>;
 type Files = Record<string, { mime?: string; repo?: string; license?: string; nonFree?: boolean; artist?: string }>;
@@ -58,8 +69,9 @@ describe("lookupDestinationPhoto", () => {
   it("falls back from 'City, Country' to the city name", async () => {
     const { fn, calls } = fakeFetch({ Lisbon: { pageimage: "Lisboa_view.jpg" } }, { "Lisboa_view.jpg": {} });
     expect(await lookupDestinationPhoto("Lisbon, Portugal", fn)).not.toBeNull();
-    // "Lisbon, Portugal" on Wikipedia, then Wikivoyage; "Lisbon" on Wikipedia + its file.
-    expect(calls).toHaveLength(4);
+    // Both sources in parallel per title: "Lisbon, Portugal" x2 misses, then "Lisbon" x2 + a file lookup each.
+    expect(calls).toHaveLength(6);
+    expect(calls.slice(0, 2).every((u) => new URL(u).searchParams.get("titles") === "Lisbon, Portugal")).toBe(true);
   });
 
   it("falls back to Wikivoyage when Wikipedia's lead image is unusable", async () => {
@@ -78,6 +90,8 @@ describe("lookupDestinationPhoto", () => {
     ["a non-free file", "Poster.jpg", { license: "Fair use", repo: "local" }],
     ["a NonFree-flagged file", "Poster.jpg", { nonFree: true }],
     ["an all-rights-reserved file", "Poster.jpg", { license: "All rights reserved" }],
+    ["a NonCommercial license", "Poster.jpg", { license: "CC BY-NC-SA 2.0" }],
+    ["a NoDerivatives license", "Poster.jpg", { license: "CC BY-ND 4.0" }],
   ])("rejects %s", async (_label, name, file) => {
     const { fn } = fakeFetch({ Place: { pageimage: name } }, { [name]: file });
     expect(await lookupDestinationPhoto("Place", fn)).toBeNull();
@@ -96,6 +110,25 @@ describe("lookupDestinationPhoto", () => {
     expect(await lookupDestinationPhoto("Nowhere-ville", fn)).toBeNull();
   });
 
+  it("a failure at one source doesn't stop the other (review fix)", async () => {
+    const wv = fakeFetch({ Lisbon: { pageimage: "L.jpg" } }, { "L.jpg": {} });
+    const fn = async (url: string) => {
+      if (url.includes("wikipedia")) throw new Error("timeout");
+      return wv.fn(url);
+    };
+    expect(await lookupDestinationPhoto("Lisbon", fn)).not.toBeNull();
+  });
+
+  it("asks fetch not to cache (Next's fetch cache would ignore our TTLs)", async () => {
+    const inits: unknown[] = [];
+    await lookupDestinationPhoto("Lisbon", async (_u, init) => {
+      inits.push(init);
+      return { ok: false, json: async () => ({}) };
+    });
+    expect(inits.length).toBeGreaterThan(0);
+    expect(inits.every((i) => (i as { cache?: string }).cache === "no-store")).toBe(true);
+  });
+
   it("never throws: network errors and bad JSON give null", async () => {
     expect(await lookupDestinationPhoto("Lisbon", async () => { throw new Error("offline"); })).toBeNull();
     expect(await lookupDestinationPhoto("Lisbon", async () => ({ ok: true, json: async () => null }))).toBeNull();
@@ -108,7 +141,54 @@ describe("lookupDestinationPhoto", () => {
   });
 });
 
+describe("getDestinationPhoto cache", () => {
+  const photo = (place: string): DestinationPhoto => ({
+    place,
+    src: "https://x/1.jpg",
+    srcSet: "",
+    width: 1,
+    height: 1,
+    author: "A",
+    license: "CC0",
+    sourceUrl: "https://commons.wikimedia.org/wiki/File:1.jpg",
+  });
+
+  beforeEach(() => resetDestinationPhotoCache());
+
+  it("looks a place up once and gives each caller its own spelling", async () => {
+    const lookup = vi.fn(async (p: string) => photo(p));
+    expect((await getDestinationPhoto("lisbon", lookup))?.place).toBe("lisbon");
+    expect((await getDestinationPhoto(" Lisbon ", lookup))?.place).toBe("Lisbon");
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries misses after 10 minutes, hits after a day", async () => {
+    const lookup = vi.fn(async () => null);
+    await getDestinationPhoto("Nowhere", lookup, 0);
+    await getDestinationPhoto("Nowhere", lookup, 9 * 60_000);
+    expect(lookup).toHaveBeenCalledTimes(1);
+    await getDestinationPhoto("Nowhere", lookup, 11 * 60_000);
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it("caps uncached lookups per minute, without caching the refusal", async () => {
+    const lookup = vi.fn(async (p: string) => photo(p));
+    for (let i = 0; i < MAX_COLD_LOOKUPS_PER_MINUTE; i++) await getDestinationPhoto(`place ${i}`, lookup, 1000);
+    expect(await getDestinationPhoto("one too many", lookup, 1000)).toBeNull();
+    expect(lookup).toHaveBeenCalledTimes(MAX_COLD_LOOKUPS_PER_MINUTE);
+    // Cached places still answer, and a new minute allows the refused one.
+    expect(await getDestinationPhoto("place 0", lookup, 1000)).not.toBeNull();
+    expect(await getDestinationPhoto("one too many", lookup, 62_000)).not.toBeNull();
+  });
+});
+
 describe("helpers", () => {
+  it("placeLabel and photoCacheKey", () => {
+    expect(placeLabel("Lisbon, Portugal")).toBe("Lisbon");
+    expect(placeLabel(", odd")).toBe(", odd");
+    expect(photoCacheKey("  Lisbon ")).toBe("lisbon");
+  });
+
   it("plainText strips tags and entities", () => {
     expect(plainText('<a href="x">Vitor&nbsp;Oliveira</a> from <b>Torres &amp; Vedras</b>')).toBe(
       "Vitor Oliveira from Torres & Vedras",

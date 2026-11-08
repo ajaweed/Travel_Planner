@@ -1,6 +1,7 @@
 "use client";
 
 import { MapPin } from "lucide-react";
+import { photoCacheKey, placeLabel } from "@trip-planner/core/src/destinationPhoto";
 import { PhotoCredit, PhotoFill, useDestinationPhoto } from "./DestinationPhoto";
 
 const MAX_PLACES = 3;
@@ -11,7 +12,16 @@ const MAX_PLACES = 3;
  * destination has a usable photo, so a trip never shows an empty frame.
  */
 export function TripPhotoBanner({ destinations }: { destinations: string[] }) {
-  const places = destinations.slice(0, MAX_PLACES);
+  // De-duplicated: a round trip can list its first city again at the end.
+  const seen = new Set<string>();
+  const places = destinations
+    .filter((d) => {
+      const key = photoCacheKey(d);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, MAX_PLACES);
   // Fixed-length hook calls: places is at most MAX_PLACES, padded with undefined.
   const s0 = useDestinationPhoto(places[0]);
   const s1 = useDestinationPhoto(places[1]);
@@ -41,7 +51,7 @@ export function TripPhotoBanner({ destinations }: { destinations: string[] }) {
             <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-ink-900/70 to-transparent" />
             <span className="absolute bottom-4 left-4 inline-flex items-center gap-1.5 font-display text-xl font-semibold text-white [text-shadow:0_1px_8px_rgba(31,42,51,0.6)] md:text-2xl">
               <MapPin size={18} strokeWidth={2} aria-hidden="true" />
-              {place.split(",")[0]}
+              {placeLabel(place)}
             </span>
           </div>
         ))}

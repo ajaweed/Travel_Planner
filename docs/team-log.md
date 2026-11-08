@@ -535,3 +535,31 @@ exception that section allowed for: a licensed source showing the actual place. 
 Wikipedia lead image of the trip's real destination, with free-licensed Commons images only,
 credited (author + license + link) wherever shown. Trip header gets the destination photo;
 landing page gets clickable destination-idea cards.
+
+**2026-11-08 -- frontend-dev** -- FINISH `frontend-dev/destination-photos`. Destination photos
+are live: `getDestinationPhoto()` (core) takes the Wikipedia lead image of the place, with
+Wikivoyage as fallback (fills Dubai, Hoi An). Commons-hosted, freely licensed JPEG/WebP
+only; flags, maps, collages, wiki-local and non-free files are rejected. Served by
+`GET /api/photos?place=`. The trip header shows the destination photo (up to 3 tiles for
+multi-city). The landing page has six "Need a starting point?" photo cards that fill the
+prompt. Every photo shows author + license, both linked. srcSet uses Wikimedia's standard
+thumbnail widths, so cards download ~500px images instead of ~1MB each. Design spec §3/§7
+and the architecture decisions log are updated. Some places get no photo (Patagonia and
+Portugal, whose lead images are a map and a flag); those keep the gradient.
+`/code-review` (medium) raised 10 findings; all fixed:
+- Each source request now fails on its own, so a Wikipedia timeout no longer skips the
+  Wikivoyage fallback. Sources run in parallel per title under one 8s deadline (was up to ~40s).
+- `cache: "no-store"` on fetches, so Next's fetch cache can't override our 24h/10min TTLs.
+- CC NonCommercial/NoDerivatives licenses are rejected.
+- The client forgets failed requests instead of caching null for the page's lifetime.
+- An image that fails to load drops its photo and its credit (onError, plus a check
+  for images already complete at mount).
+- The public endpoint only accepts place-name characters and caps uncached lookups at
+  30/min, so it can't be used to hammer Wikimedia.
+- Cached photos carry each caller's own spelling of the place.
+- Duplicate destinations are de-duplicated in the banner (no duplicate React keys).
+- `placeLabel`/`photoCacheKey` are shared from core (client deep-imports the pure module).
+Tests: 111 core + 13 (28 new photo tests), typecheck and build pass. Screenshots taken of
+the landing page and the Lisbon/Kyoto/Dubai trips. Env note: an orphan `next dev` was left
+holding port 3000 (killing it was blocked), so verification ran on :3001.
+Merged to `main` and pushed. Reviewed by `/code-review`.

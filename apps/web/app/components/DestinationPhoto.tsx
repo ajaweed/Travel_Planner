@@ -4,44 +4,60 @@
 // Commons images of the actual place, fetched via /api/photos. Every photo
 // shown must show its credit too; <PhotoCredit> is not optional.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DestinationPhoto as Photo } from "@trip-planner/core";
+// Deep import: the package index pulls in server-only code (Prisma).
+import { photoCacheKey } from "@trip-planner/core/src/destinationPhoto";
 
-type State = { status: "loading" } | { status: "ready"; photo: Photo | null };
+export type PhotoState =
+  | { status: "loading" }
+  | {
+      status: "ready";
+      photo: Photo | null;
+      /** Call when the image itself fails to load: drops the photo and its credit. */
+      reportBroken: () => void;
+    };
 
-// Shared across components so a place is fetched once per page load.
+// Shared across components so a place is fetched once per page load. Only
+// real answers are kept; a failed request is forgotten so a later mount retries.
 const clientCache = new Map<string, Promise<Photo | null>>();
 
 function fetchPhoto(place: string): Promise<Photo | null> {
-  const key = place.trim().toLowerCase();
-  let p = clientCache.get(key);
-  if (!p) {
-    p = fetch(`/api/photos?place=${encodeURIComponent(place.trim())}`)
-      .then((r) => (r.ok ? r.json() : { photo: null }))
-      .then((j) => (j?.photo ?? null) as Photo | null)
-      .catch(() => null);
-    clientCache.set(key, p);
-  }
+  const key = photoCacheKey(place);
+  const cached = clientCache.get(key);
+  if (cached) return cached;
+  const p = fetch(`/api/photos?place=${encodeURIComponent(place.trim())}`)
+    .then((r) => {
+      if (!r.ok) throw new Error(`photos ${r.status}`);
+      return r.json();
+    })
+    .then((j) => (j?.photo ?? null) as Photo | null)
+    .catch(() => {
+      clientCache.delete(key);
+      return null;
+    });
+  clientCache.set(key, p);
   return p;
 }
 
-export function useDestinationPhoto(place: string | undefined): State {
-  const [state, setState] = useState<State>({ status: "loading" });
+export function useDestinationPhoto(place: string | undefined): PhotoState {
+  const [photo, setPhoto] = useState<Photo | null | undefined>(undefined);
+  const reportBroken = useCallback(() => setPhoto(null), []);
   useEffect(() => {
     if (!place?.trim()) {
-      setState({ status: "ready", photo: null });
+      setPhoto(null);
       return;
     }
     let cancelled = false;
-    setState({ status: "loading" });
-    fetchPhoto(place).then((photo) => {
-      if (!cancelled) setState({ status: "ready", photo });
+    setPhoto(undefined);
+    fetchPhoto(place).then((p) => {
+      if (!cancelled) setPhoto(p);
     });
     return () => {
       cancelled = true;
     };
   }, [place]);
-  return state;
+  return photo === undefined ? { status: "loading" } : { status: "ready", photo, reportBroken };
 }
 
 /**
@@ -53,7 +69,7 @@ export function PhotoFill({
   sizes = "100vw",
   className = "",
 }: {
-  state: State;
+  state: PhotoState;
   /** `<img sizes>`: how wide the photo renders, so the browser picks a small file. */
   sizes?: string;
   className?: string;
@@ -63,19 +79,24 @@ export function PhotoFill({
     <div aria-hidden="true" className={`absolute inset-0 overflow-hidden bg-gradient-to-br from-sunset-50 via-sand-100 to-lagoon-50 ${className}`}>
       {state.status === "loading" && <div className="absolute inset-0 bg-sand-100 motion-safe:animate-pulse" />}
       {/* Keyed by src so a new photo gets a fresh fade-in state. */}
-      {photo && <FadeInImage key={photo.src} photo={photo} sizes={sizes} />}
+      {photo && state.status === "ready" && (
+        <FadeInImage key={photo.src} photo={photo} sizes={sizes} onBroken={state.reportBroken} />
+      )}
     </div>
   );
 }
 
-function FadeInImage({ photo, sizes }: { photo: Photo; sizes: string }) {
+function FadeInImage({ photo, sizes, onBroken }: { photo: Photo; sizes: string; onBroken: () => void }) {
   const ref = useRef<HTMLImageElement>(null);
   const [loaded, setLoaded] = useState(false);
-  // A cached image can finish loading before React attaches onLoad; without
-  // this check it would stay invisible.
+  // A cached image can finish (or fail) before React attaches its handlers;
+  // without this check it would stay invisible, or keep a credit for nothing.
   useEffect(() => {
-    if (ref.current?.complete && ref.current.naturalWidth > 0) setLoaded(true);
-  }, []);
+    const el = ref.current;
+    if (!el?.complete) return;
+    if (el.naturalWidth > 0) setLoaded(true);
+    else onBroken();
+  }, [onBroken]);
   return (
     // Plain <img>: hotlinked Commons thumbnails, already resized by Wikimedia.
     // eslint-disable-next-line @next/next/no-img-element
@@ -90,6 +111,7 @@ function FadeInImage({ photo, sizes }: { photo: Photo; sizes: string }) {
       decoding="async"
       referrerPolicy="no-referrer"
       onLoad={() => setLoaded(true)}
+      onError={onBroken}
       className={`h-full w-full object-cover motion-safe:transition-opacity motion-safe:duration-500 ${loaded ? "opacity-100" : "opacity-0"}`}
     />
   );

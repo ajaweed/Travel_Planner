@@ -6,8 +6,10 @@ import { getDestinationPhoto } from "@trip-planner/core";
 // (never an error) when there's no suitable photo: photos are decoration.
 export async function GET(req: NextRequest) {
   const place = req.nextUrl.searchParams.get("place")?.trim() ?? "";
-  if (!place || place.length > 100) {
-    return NextResponse.json({ error: "place is required (max 100 characters)" }, { status: 400 });
+  // Place names only: letters (any script), spaces and light punctuation.
+  // Lookups are also rate-capped in getDestinationPhoto.
+  if (!place || place.length > 100 || !/^[\p{L}\p{M}][\p{L}\p{M}\p{N} .,'’()&-]*$/u.test(place)) {
+    return NextResponse.json({ error: "place must be a place name (max 100 characters)" }, { status: 400 });
   }
   const photo = await getDestinationPhoto(place);
   return NextResponse.json(
