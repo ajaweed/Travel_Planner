@@ -1,21 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDestinationPhoto } from "@trip-planner/core";
+import { getDestinationPhotos } from "@trip-planner/core";
 
-// GET /api/photos?place=Lisbon -> { photo: DestinationPhoto | null }
-// Freely licensed Wikimedia Commons photo of the place, with its credit. Null
-// (never an error) when there's no suitable photo: photos are decoration.
+const MAX_PLACES = 12;
+// Place names only: letters (any script), digits, spaces and light punctuation.
+const PLACE = /^[\p{L}\p{M}][\p{L}\p{M}\p{N} .,'’()&-]*$/u;
+
+// GET /api/photos?place=Lisbon&place=Kyoto -> { photos: { [place]: DestinationPhoto | null } }
+// Freely licensed Wikimedia Commons photos of the places, with credits. One
+// batched lookup for all of them. A place maps to null (never an error) when
+// there's no suitable photo: photos are decoration. New lookups are also
+// rate-capped in core (getPlaceResults).
 export async function GET(req: NextRequest) {
-  const place = req.nextUrl.searchParams.get("place")?.trim() ?? "";
-  // Place names only: letters (any script), spaces and light punctuation.
-  // Lookups are also rate-capped in getDestinationPhoto.
-  if (!place || place.length > 100 || !/^[\p{L}\p{M}][\p{L}\p{M}\p{N} .,'’()&-]*$/u.test(place)) {
-    return NextResponse.json({ error: "place must be a place name (max 100 characters)" }, { status: 400 });
+  const places = [...new Set(req.nextUrl.searchParams.getAll("place").map((p) => p.trim()))];
+  if (places.length === 0 || places.length > MAX_PLACES || places.some((p) => p.length > 100 || !PLACE.test(p))) {
+    return NextResponse.json(
+      { error: `1-${MAX_PLACES} place names required (max 100 characters each)` },
+      { status: 400 },
+    );
   }
-  const photo = await getDestinationPhoto(place);
+  const photos = await getDestinationPhotos(places);
+  const anyMissing = [...photos.values()].some((p) => !p);
   return NextResponse.json(
-    { photo },
-    // Browsers keep it a day; misses get a shorter life so a transient
-    // Wikipedia failure doesn't stick.
-    { headers: { "Cache-Control": `public, max-age=${photo ? 86400 : 600}` } },
+    { photos: Object.fromEntries(photos) },
+    // Misses get a short browser life so a busy Wikimedia doesn't stick.
+    { headers: { "Cache-Control": `public, max-age=${anyMissing ? 600 : 86400}` } },
   );
 }

@@ -6,8 +6,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DestinationPhoto as Photo } from "@trip-planner/core";
-// Deep import: the package index pulls in server-only code (Prisma).
-import { photoCacheKey } from "@trip-planner/core/src/destinationPhoto";
+// Deep import of a dependency-free module: the package index pulls in
+// server-only code (Prisma, the Wikimedia client).
+import { photoCacheKey } from "@trip-planner/core/src/placeNames";
+
+export type { Photo };
 
 export type PhotoState =
   | { status: "loading" }
@@ -22,22 +25,73 @@ export type PhotoState =
 // real answers are kept; a failed request is forgotten so a later mount retries.
 const clientCache = new Map<string, Promise<Photo | null>>();
 
+// Places requested in the same tick go out as one batched request (the
+// landing page's six cards cost one call, and one Wikimedia lookup).
+const BATCH_MAX = 12; // matches /api/photos
+let queued: Array<{ place: string; resolve: (p: Photo | null) => void }> = [];
+
+function flushQueue() {
+  const all = queued;
+  queued = [];
+  for (let i = 0; i < all.length; i += BATCH_MAX) {
+    const batch = all.slice(i, i + BATCH_MAX);
+    const qs = batch.map(({ place }) => `place=${encodeURIComponent(place)}`).join("&");
+    fetch(`/api/photos?${qs}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`photos ${r.status}`);
+        return r.json();
+      })
+      .then((j) => {
+        for (const { place, resolve } of batch) resolve((j?.photos?.[place] ?? null) as Photo | null);
+      })
+      .catch(() => {
+        for (const { place, resolve } of batch) {
+          clientCache.delete(photoCacheKey(place));
+          resolve(null);
+        }
+      });
+  }
+}
+
 function fetchPhoto(place: string): Promise<Photo | null> {
   const key = photoCacheKey(place);
   const cached = clientCache.get(key);
   if (cached) return cached;
-  const p = fetch(`/api/photos?place=${encodeURIComponent(place.trim())}`)
-    .then((r) => {
-      if (!r.ok) throw new Error(`photos ${r.status}`);
-      return r.json();
-    })
-    .then((j) => (j?.photo ?? null) as Photo | null)
-    .catch(() => {
-      clientCache.delete(key);
-      return null;
-    });
+  const p = new Promise<Photo | null>((resolve) => {
+    if (queued.length === 0) setTimeout(flushQueue, 0);
+    queued.push({ place: place.trim(), resolve });
+  });
   clientCache.set(key, p);
   return p;
+}
+
+/** Photos for several places at once, in the given order (for the trip banner). */
+export function useDestinationPhotos(places: string[]): PhotoState[] {
+  const key = places.map(photoCacheKey).join("|");
+  const [photos, setPhotos] = useState<Record<string, Photo | null>>({});
+  const [broken, setBroken] = useState<Record<string, true>>({});
+  useEffect(() => {
+    let cancelled = false;
+    setPhotos({});
+    for (const place of places) {
+      fetchPhoto(place).then((p) => {
+        if (!cancelled) setPhotos((cur) => ({ ...cur, [photoCacheKey(place)]: p }));
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the normalised list
+  }, [key]);
+  return places.map((place) => {
+    const k = photoCacheKey(place);
+    if (!(k in photos)) return { status: "loading" };
+    return {
+      status: "ready",
+      photo: broken[k] ? null : photos[k]!,
+      reportBroken: () => setBroken((b) => ({ ...b, [k]: true })),
+    };
+  });
 }
 
 export function useDestinationPhoto(place: string | undefined): PhotoState {
@@ -118,18 +172,27 @@ function FadeInImage({ photo, sizes, onBroken }: { photo: Photo; sizes: string; 
 }
 
 /** "Photo: Author · CC BY-SA 2.0" linking to the Commons file page (the license's required credit). */
-export function PhotoCredit({ photo, className = "" }: { photo: Photo | null | undefined; className?: string }) {
+export function PhotoCredit({
+  photo,
+  label,
+  className = "",
+}: {
+  photo: Photo | null | undefined;
+  /** What the photo shows, when the surrounding text doesn't make it obvious. */
+  label?: string;
+  className?: string;
+}) {
   if (!photo) return null;
   return (
     // Only the author may truncate (full name in the tooltip); the license
     // must always be readable.
     <p className={`flex min-w-0 items-baseline gap-1 whitespace-nowrap text-[11px] leading-4 text-ink-500 ${className}`}>
-      <span className="shrink-0">Photo:</span>
+      <span className={label ? "min-w-0 max-w-[45%] truncate" : "shrink-0"}>{label ? `Photo of ${label}:` : "Photo:"}</span>
       <a
         href={photo.sourceUrl}
         target="_blank"
         rel="noopener noreferrer"
-        title={`${photo.author} (photo of ${photo.place}, via Wikimedia Commons)`}
+        title={`${photo.author} (photo of ${photo.subject ?? photo.place}, via Wikimedia Commons)`}
         className="min-w-0 truncate underline decoration-sand-400 underline-offset-2 hover:text-ink-700"
       >
         {photo.author}

@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { BookingLinks } from "./BookingLinks";
+import { PhotoCredit, PhotoFill, type Photo } from "./DestinationPhoto";
 import { ResearchLinks } from "./ResearchLinks";
 import { StatusPill } from "./StatusPill";
 import { CARD_CLASSES, fmtMoney } from "./ui";
@@ -172,7 +173,20 @@ function AiBookingDetail({ booking, testMode }: { booking: Booking; testMode: bo
   }
 }
 
-function ActivityRow({ activity, aiMode, testMode }: { activity: Activity; aiMode: boolean; testMode: boolean }) {
+function ActivityRow({
+  activity,
+  aiMode,
+  testMode,
+  photo: foundPhoto,
+}: {
+  activity: Activity;
+  aiMode: boolean;
+  testMode: boolean;
+  /** Photo of the named place this stop is at, if one was confidently found. */
+  photo?: Photo;
+}) {
+  const [photoBroken, setPhotoBroken] = useState(false);
+  const photo = photoBroken ? undefined : foundPhoto;
   const booking = activity.booking;
   const Icon = (booking && KIND_ICONS[booking.kind]) || MapPin;
   const linkOut = booking?.status === "LINK_OUT";
@@ -188,9 +202,22 @@ function ActivityRow({ activity, aiMode, testMode }: { activity: Activity; aiMod
       } ${awaiting ? "border-l-4 border-l-warning-700 bg-warning-50/60" : ""}`}
     >
       <div className="flex min-w-0 flex-1 gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sand-100 text-ink-700">
-          <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
-        </span>
+        {photo ? (
+          // The photo stands in for the kind icon, which rides on its corner.
+          <span className="relative h-16 w-24 shrink-0 overflow-hidden rounded-lg sm:h-20 sm:w-28">
+            <PhotoFill
+              state={{ status: "ready", photo, reportBroken: () => setPhotoBroken(true) }}
+              sizes="112px"
+            />
+            <span className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded-md bg-white/90 text-ink-700">
+              <Icon size={14} strokeWidth={1.75} aria-hidden="true" />
+            </span>
+          </span>
+        ) : (
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sand-100 text-ink-700">
+            <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+          </span>
+        )}
         <div className="min-w-0">
           <p className="font-medium text-ink-900">
             {activity.startTime && (
@@ -200,6 +227,7 @@ function ActivityRow({ activity, aiMode, testMode }: { activity: Activity; aiMod
           </p>
           {activity.description && <p className="mt-0.5 text-sm text-ink-500">{activity.description}</p>}
           <ResearchLinks links={activity.research} subject={activity.title} />
+          {photo && <PhotoCredit photo={photo} label={photo.subject} className="mt-1" />}
           {booking && !linkOut && (
             <div className="mt-1.5" aria-live="polite">
               <AiBookingDetail booking={booking} testMode={testMode} />
@@ -230,10 +258,13 @@ export function ItineraryTimeline({
   days,
   aiMode,
   testMode,
+  stopPhotos = {},
 }: {
   days: Day[];
   aiMode: boolean;
   testMode: boolean;
+  /** Activity id -> photo of the place (from /api/trips/:id/photos). */
+  stopPhotos?: Record<string, Photo>;
 }) {
   return (
     <ol className="relative ml-5 mt-8 space-y-6 border-l-2 border-sand-300">
@@ -260,7 +291,13 @@ export function ItineraryTimeline({
             </div>
             <ul className="divide-y divide-sand-100 border-t border-sand-100">
               {day.activities.map((activity) => (
-                <ActivityRow key={activity.id} activity={activity} aiMode={aiMode} testMode={testMode} />
+                <ActivityRow
+                  key={activity.id}
+                  activity={activity}
+                  aiMode={aiMode}
+                  testMode={testMode}
+                  photo={stopPhotos[activity.id]}
+                />
               ))}
             </ul>
           </div>
