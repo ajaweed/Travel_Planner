@@ -8,18 +8,28 @@ This doc tells you what to build, with exact values. Flow and copy commitments f
 `.claude/agents/ux-designer.md` and the options spec in `docs/team-log.md` still apply.
 Where this doc and those conflict, the commitments win.
 
-> **Product change, 2026-11-08: the app no longer books anything.** Each bookable item
-> (flight, hotel, tour/event) instead gets a **"Book it yourself"** link. The link is a
-> deterministic provider search URL built from the item's own details (dates,
-> origin/destination, place name). The model never writes these URLs. This spec reflects
-> that change:
-> - No booking-progress or booking-status states (SEARCHING/BOOKED/FAILED/AWAITING_CONFIRMATION).
-> - No payment UI.
-> - No "provider not configured" booking states.
-> - Budget figures are **estimates only**, since we never see real prices.
+> **Product model (as of 2026-11-08): booking is the user's choice.** When choosing a plan,
+> the user picks a **booking mode**:
+> - **"I'll book it myself" (SELF, the default).** Every bookable item (flight, hotel,
+>   tour/event) gets a "Book it yourself" link: a deterministic provider search URL built
+>   from the item's own details, never one the model writes. The budget is estimate-only.
+>   Trip status goes to `READY_TO_BOOK`.
+> - **"Let the AI book it for me" (AI).** BookingAgent books each item via provider APIs.
+>   Per-item booking states, real committed/pending budget figures and booking
+>   notifications all apply. Every item that isn't BOOKED also shows the link fallback.
+>   Trip status goes `BOOKING`, then `CONFIRMED` or `NEEDS_ATTENTION`.
 >
-> The link-out pattern is §4.7. backend-dev is building the data side on `main`, so field
-> names below are described by meaning. Wire them to whatever shape lands.
+> Providers are **sandbox-only** right now, so AI mode has to say "test mode" everywhere
+> it could otherwise be mistaken for a real reservation.
+>
+> Key sections:
+> - Mode choice: §4.3 "Booking mode".
+> - Link-out: §4.7.
+> - AI-mode item states: §4.9.
+> - Budget per mode: §4.3 "Budget card".
+>
+> backend-dev is building the data side on `main`, so field names are described by
+> meaning. Wire them to whatever shape lands.
 
 ---
 
@@ -35,9 +45,8 @@ sand-colored paper, with a deep-lagoon brand color for anything you click or tru
 - **Aspirational, without stock photos.** Gradients and an original contour-line pattern
   (map topography) do the work photography usually does. We hold no image rights, and a
   photo of the wrong beach is a small lie anyway (see §3).
-- **Trustworthy, because people spend real money on what it tells them.** We don't take
-  payment, but users go book flights and hotels based on our plan and our cost
-  estimates. Everything you can act on (buttons, links,
+- **Trustworthy, because real money moves on what it tells them.** Either the user books
+  from our links and estimates, or our agent books for them. Everything you can act on (buttons, links,
   focus rings, progress) uses one sober color, lagoon teal `#0E6B66`. Money figures use
   a tabular sans (Inter `tabular-nums`) and are never set in the decorative serif.
   Status colors mean one thing each and always come with an icon and a word, never
@@ -117,6 +126,9 @@ components):**
 | danger-700 / danger-50 | 5.75 | pill/alert |
 | danger-700 / white | 6.57 | inline error text |
 | sand-400 / white | 3.36 | input border (non-text, ≥3:1) |
+| ink-900 / warning-50 | 13.28 | test-mode caveat, awaiting-confirmation rows |
+| ink-500 / warning-50 | 4.97 | captions inside warning boxes |
+| ink-700 / sand-100 (tick) | 7.78 | AI budget estimate marker (non-text) |
 
 **Don'ts that came out of those numbers:**
 - **Never put `ink-500` on `sand-200`** (4.15, fails). Muted text goes on white, `sand-50` or `sand-100` only.
@@ -125,8 +137,8 @@ components):**
 - `sunset-600` passes at 4.77 for text, but keep it to accents and large text. It is not
   a CTA color.
 - `value-600` (`#2F6B3E`) and `success-700` (`#1E6B3C`) are close. That's acceptable
-  because tier cards (CHOOSING) and the success-green "Plan ready" pill and checklist
-  ticks (after choosing) are never on screen together, and both always carry an icon and a label.
+  because tier cards (CHOOSING) and success-green booking pills (AI mode, after choosing)
+  are never on screen together, and both always carry an icon and a label.
 
 ### 2.2 Typography (next/font)
 
@@ -286,16 +298,16 @@ contour pattern behind it:
    "<em>We'll find the trip.</em>". The `<em>` is Fraunces italic in `text-sunset-600`.
    (Replaces the "Trip Planner AI" H1, since the name is already in the header.)
 3. **Subhead (body-lg, ink-700, max-w-xl, centered)**: "Not sure where to go? Say so.
-   We'll draft a few options with estimated costs side by side. Then you book each piece
-   yourself, straight from the plan."
+   We'll draft a few options with estimated costs side by side. Then book each piece
+   yourself from ready-made links, or let our AI book it for you."
 4. **Prompt box**: a `Card` with `rounded-3xl shadow-lift p-2`, `max-w-2xl w-full`.
    - Borderless textarea inside (`border-0 bg-transparent text-lg p-4 focus:ring-0`, 4
      rows). The card itself shows focus via `focus-within:ring-2 focus-within:ring-lagoon-600/40`.
      Placeholder text is unchanged. Keep a visible `<label class="sr-only">` "Describe your
      trip".
    - Footer row inside the card, `flex items-center justify-between border-t border-sand-100 px-4 py-3`:
-     on the left, a caption in ink-500 with a `ShieldCheck` icon: "We never book or charge
-     anything." On the right, a primary `Button` reading "Plan my trip" with `ArrowRight`.
+     on the left, a caption in ink-500 with a `ShieldCheck` icon: "Nothing is booked unless
+     you ask us to." On the right, a primary `Button` reading "Plan my trip" with `ArrowRight`.
    - Submitting: the button shows `Loader2` (spin, motion-safe) and "Drafting your
      options…", and the textarea becomes `readOnly` with `aria-busy`. Copy changed from
      "Planning..." so the user knows what's happening (commitment 3).
@@ -318,7 +330,7 @@ contour pattern behind it:
    an h3, and one line of small ink-700:
    - `MessageSquareText` **Describe it**: "Any detail you have, or none at all."
    - `Columns3` **Compare real options**: "Value, balanced and elevated takes, each with an estimated cost."
-   - `ExternalLink` **Book it yourself**: "Every flight, hotel and tour links to a ready-made search on the provider's site."
+   - `ExternalLink` **Book it your way**: "Get a ready-made search link for every piece, or let the AI book it within your budget."
 
    This section is factual only. No logos, no stats.
 
@@ -330,28 +342,59 @@ contour pattern at 5% opacity), containing:
 - Meta row (caption, ink-700, `CalendarDays` icon): the date range from `trip.startDate` and
   `trip.endDate` when present (format "Mar 10 – Mar 17, 2027"), and the day count when
   the itinerary exists. If neither is known, omit the row. Don't invent a placeholder.
+- Booking-mode chip in the meta row, once a plan is chosen:
+  - SELF: `ExternalLink` + "You're booking".
+  - AI: `Bot` + "AI booking", plus a separate `FlaskConical` "Test mode" chip
+    (`bg-warning-50 text-warning-700`) while providers are sandbox-only.
+
+  Style: `rounded-full bg-white/70 px-2.5 py-1 text-xs font-medium text-ink-700`.
 
 **Budget card** (`BudgetBar.tsx`, directly under the header, overlapping the band by
-`-mt-6` for depth). It's a `Card` with `p-5`. **Everything in it is an estimate, and the
-visuals must say so.** We never see a real price, so nothing here may look like a
+`-mt-6` for depth). It's a `Card` with `p-5`. It has **two modes, matching the booking
+mode**, plus a pre-choice state that shows only "Budget $2,500" with no bar.
+
+*SELF mode: estimate only.* We never see a real price, so nothing here may look like a
 statement or receipt.
 - Left: eyebrow "Estimated cost", then the price-style figure with a leading tilde,
   "~$1,240", followed by "of your $2,500 budget" in body ink-500, all in tabular-nums. The
-  figure is the chosen option's estimate. Before a plan is chosen, show only "Budget
-  $2,500" with no bar (the option cards carry the per-option estimates).
+  figure is the chosen option's estimate.
 - Right: "~$1,260 to spare" in small ink-700, or the over-estimate state below.
 - Bar: `h-2.5 rounded-full bg-sand-100` track with **one striped fill**,
-  `bg-estimate-stripes`. It's never solid: stripes are the visual language for
-  "estimate, not final". Clamp the width at 100%. There are no booked/pending segments
-  any more, because nothing is ever confirmed in-app.
+  `bg-estimate-stripes`. It's never solid: stripes mean "not final". Clamp the width at
+  100%.
 - Footnote, always visible (caption ink-500, `Info` icon): "Estimate from your plan, not
-  live prices. Final prices are set on each provider's site when you book." This
-  replaces the "Includes … pending confirmation" line.
+  live prices. Final prices are set on each provider's site when you book."
 - Estimate over budget: the card gets `border-l-4 border-l-warning-700`, the stripes stay
   but the fill turns warning-tinted (`bg-warning-700/40`), and an `AlertTriangle` sits
   beside "Estimated ~$X over budget. Consider the value option or revise the plan." in
   `text-warning-700 font-medium`. **Use warning, not danger**: it's a forecast, not a
   charge that already happened.
+
+*AI mode: real figures, with the estimate as a reference.*
+- Left: eyebrow "Budget", then the price-style figure "$980" with **no tilde**, then "booked
+  of $2,500" in body ink-500. Below it, when pending > 0, a small ink-700 line: "+ $260
+  waiting on confirmation".
+- Right: "$1,260 left" (real remaining) in small ink-700.
+- Bar (`h-2.5` track, `bg-sand-100`):
+  - Committed is a **solid** `bg-lagoon-600` segment.
+  - Pending follows it as a `bg-estimate-stripes` segment. Stripes keep their one meaning,
+    "not final".
+  - The **plan estimate is a marker, not a fill**: a 2px `bg-ink-700` tick (`h-4`,
+    vertically centered, overflowing the bar) at the estimate's position. A caption sits
+    under it: "Plan estimate ~$1,240", with `aria-hidden` on the tick and the same text
+    in the legend. If the estimate is beyond the budget, pin the tick at the right end
+    and caption "Plan estimate ~$2,700 (over budget)".
+- Legend (caption ink-500): solid swatch "Booked $980", striped swatch "Pending $260",
+  tick swatch "Plan estimate ~$1,240". This lets the user see at a glance whether real
+  prices are running above or below the plan.
+- Over budget (committed + pending > budget): the card gets `border-l-4
+  border-l-danger-700`, the committed fill turns `bg-danger-700`, and an `AlertTriangle`
+  sits beside "Over budget by $X." in `text-danger-700 font-medium`. **Danger is right
+  here**: these are real (or test) charges, not a forecast.
+- **Test mode:** the eyebrow reads "Budget · test bookings", and the footnote (`FlaskConical`,
+  caption ink-500) reads "Test-mode prices from provider sandboxes. Nothing has been
+  charged." This must be visible whenever providers are sandbox-only, so a sandbox
+  "$980 booked" can never be read as a real charge.
 
 **Clarification prompt** (the `pendingClarification` form). It's a question, not a warning,
 so it **moves off amber**:
@@ -365,8 +408,7 @@ so it **moves off amber**:
 
 **Planning state (`PLANNING`):**
 - An h2 "Drafting a few versions of this trip" with a `Loader2` (spin) before it, and the
-  sentence "This takes a minute or so." below it in ink-700. Drop the old "nothing is being
-  booked yet", because we never book.
+  sentence "This takes a minute, and nothing is being booked." below it in ink-700.
 - Three skeleton cards matching the real option card's structure: a 40px tier header
   strip in `sand-100`, a title bar, a price bar and 3 text lines, all `bg-sand-100
   motion-safe:animate-pulse rounded`. A skeleton that mirrors the real layout makes
@@ -394,7 +436,7 @@ Card anatomy (a `Card`, `overflow-hidden border-t-4 flex flex-col`, hover lift):
      "Lowest estimate" if it's the cheapest. The delta is the comparison signal, so it's
      always on its own line and never truncated.
    - Facts row: a `flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-700` list of icon+text
-     pairs: `CalendarDays` "5 days", `MapPin` "14 activities", `Ticket` "4 to book yourself",
+     pairs: `CalendarDays` "5 days", `MapPin` "14 activities", `Ticket` "4 to book",
      `Gauge` "Pace: Relaxed".
      **The pace badge must read "Pace: Balanced", not just "Balanced"**, because a
      value-tier card with a "Balanced" badge would collide with the balanced tier name.
@@ -410,27 +452,74 @@ Card anatomy (a `Card`, `overflow-hidden border-t-4 flex flex-col`, hover lift):
    - Review excerpt (when present): `border-l-2 border-sand-300 pl-3 text-sm italic
      text-ink-700`, with the attribution as a not-italic caption ink-500. The text stays
      verbatim.
-3. **Footer** (`p-5 pt-0`): a full-width primary `Button` "Choose this plan" with a
-   `Check` icon.
+3. **Footer** (`p-5 pt-0`): a full-width primary `Button` whose label follows the selected
+   booking mode, so the consequence is written on the button you press:
+   - SELF: `Check` + "Choose this plan".
+   - AI: `Bot` + "Choose and start booking".
 
 Section header above the grid: an h2 such as "3 ways to do this trip" (drop "— pick
-one"; the buttons make that obvious), then "We don't book anything. Once you choose, you'll
-get a link to book each piece yourself." as body ink-700 with a `ShieldCheck` icon. The footnotes under the grid ("Estimates for
+one"; the buttons make that obvious), then "Nothing is booked until you choose a plan." as
+body ink-700 with a `ShieldCheck` icon. The footnotes under the grid ("Estimates for
 comparison…" and the `ReviewNote`) become `text-sm text-ink-500` inside a `sand-100
 rounded-xl p-4` box with an `Info` icon. The `ReviewNote` copy is unchanged. The estimates
-line becomes "Estimated costs, for comparison. Real prices are whatever the provider
-charges when you book."
+line becomes "Estimated costs, for comparison. Real prices come from the provider when
+you or the AI book."
+
+**Booking mode** (new). This is a `<fieldset>` placed **between the section header and
+the card grid**, so it's read before any "Choose" button. It's one choice applied to
+whichever plan is chosen.
+- Legend: h3-sized but Inter `text-base font-semibold`: "How do you want to book?"
+- Two **radio cards** in a `grid gap-3 sm:grid-cols-2`. These are radio cards rather than
+  a segmented control because the AI option needs room for a caveat. Each card is a
+  `<label>` wrapping a visually hidden native `<input type="radio" name="bookingMode">`
+  (`sr-only peer`), so arrow keys and screen readers work for free.
+  - Card: `rounded-2xl border border-sand-200 bg-white p-4 flex gap-3 cursor-pointer
+    hover:border-lagoon-600`.
+  - Selected: `peer-checked:` → `border-lagoon-600 ring-2 ring-lagoon-600 bg-lagoon-50/50`.
+  - Focus: `peer-focus-visible:ring-offset-2` on the card.
+  - A drawn radio dot sits top-right: 18px circle, `border-sand-400`, and when selected
+    `border-lagoon-600` with a 8px `bg-lagoon-600` center.
+- **SELF card (default selected):**
+  - Icon tile: `ExternalLink` in a 36px `rounded-xl bg-lagoon-50 text-lagoon-700`.
+  - Title (`font-semibold text-ink-900`): "I'll book it myself".
+  - Body (small ink-700): "You get a ready-made search link for every flight, hotel and
+    tour. We don't book or charge anything."
+- **AI card:**
+  - Icon tile: `Bot`.
+  - Title: "Let the AI book it for me".
+  - Body: "Our booking agent books each item through provider APIs, within your budget.
+    Anything over budget waits for your OK."
+  - Then a **caveat slot**, which renders one of these, driven by a backend flag for
+    provider readiness:
+    - *Test mode (now):* `mt-3 rounded-xl bg-warning-50 p-3 text-sm text-ink-900 flex
+      gap-2`, with a `FlaskConical` icon in warning-700 and a bold "Test mode." lead-in:
+      "Booking providers aren't connected yet. The AI will try in test mode, and anything
+      it can't book falls back to links." The caveat is visible whether or not the card
+      is selected. People should see it *before* they pick, not after.
+    - *Live:* no warning box. Instead a caption, ink-500 with a `ShieldCheck` icon: "Real
+      bookings, charged by each provider. You'll see a confirmation reference for each
+      one." Payment-method collection for live mode is **not designed yet** (§7). It must
+      get a design pass before live mode ships.
+    - *Unavailable* (backend says AI booking is off): the card is disabled
+      (`opacity-60 cursor-not-allowed`, radio `disabled`). The caveat slot says why in
+      small ink-700: "AI booking isn't available right now. You can still book everything
+      yourself." Don't hide the card, because hiding it makes the feature look flaky.
+- Only show the mode choice when there is at least one bookable item. Otherwise there's
+  nothing to choose.
 
 Choosing state (after the first click):
-- The chosen card gets `ring-2 ring-lagoon-600 ring-offset-2 ring-offset-sand-50`, and its
-  button becomes `Loader2` + "Saving your plan…".
-- The other cards go to `opacity-60 saturate-50` with no hover lift, and their buttons are
-  disabled, so the user can see their choice registered and doesn't double-submit.
-- The `chooseError` alert sits above the grid as an `Alert`. Use tone `info` for anything
-  that means "still working" and tone `danger` for real errors. Any old "bookings can
-  take a few minutes" copy goes away with the booking pipeline. frontend-dev: the
-  component currently receives one `error` string, so add an `errorTone` prop if both
-  tones remain.
+- The chosen card gets `ring-2 ring-lagoon-600 ring-offset-2 ring-offset-sand-50`. Its
+  button becomes `Loader2` + "Saving your plan…" (SELF) or "Starting bookings…" (AI).
+- The other cards **and the mode fieldset** go to `opacity-60 saturate-50` and are
+  disabled, so the choice visibly registers and can't be double-submitted. That matters
+  most in AI mode, where a second submit could double-spend.
+- The `chooseError` alert sits above the grid as an `Alert`:
+  - Tone `info` for "still working" (e.g. the AI-mode "Still working on this — bookings
+    can take a few minutes…" message, which isn't a failure).
+  - Tone `danger` for real errors.
+
+  frontend-dev: the component currently receives one `error` string, so add an
+  `errorTone` prop.
 
 Grid: `grid gap-5 md:grid-cols-2 lg:grid-cols-3 items-stretch`, so cards are equal height
 and the buttons align along the bottom.
@@ -458,17 +547,27 @@ and the buttons align along the bottom.
   (`Plane`/`BedDouble`/`Ticket` for flight/hotel/tour-or-event, `MapPin` for activities
   with nothing to book) in a 32px `rounded-lg bg-sand-100` tile, then the title in
   `font-medium` with the description below in small ink-500. If `startTime` exists, show
-  it as a tabular-nums caption before the title. **There are no per-row status pills any
-  more.**
-- Bookable rows get the **"Book it yourself" link-out on the right** (stacked under the
-  text on mobile). See §4.7 for the exact treatment. Bookable rows also get a faint
-  `bg-lagoon-50/40` row tint, so "things you need to act on" are scannable down the
-  timeline.
-- Day header extra: when a day has bookable items, add a right-aligned caption chip
-  "2 to book" (`rounded-full bg-sand-100 text-xs text-ink-700`, `Ticket` icon).
-- Status banners: "Setting up …" / "Plan locked in — booking…" go away. If saving the
-  choice is ever slow enough to need one, use an `Alert` tone `info` with `Loader2` and
-  "Saving your plan…".
+  it as a tabular-nums caption before the title.
+- **SELF mode:**
+  - Bookable rows get the **"Book it yourself" link-out on the right** (stacked under the
+    text on mobile; §4.7) and a faint `bg-lagoon-50/40` row tint, so the things you need
+    to act on are scannable down the timeline.
+  - No status pills.
+  - Day header chip "2 to book" (`rounded-full bg-sand-100 text-xs text-ink-700`, `Ticket`
+    icon).
+- **AI mode:**
+  - Bookable rows show a per-item booking status pill on the right, plus status details
+    and the link fallback for every item that isn't BOOKED. See §4.9.
+  - Day header chip summarizes the day, e.g. "2 of 3 booked" (`CheckCircle2`), or
+    "1 needs you" (`AlertTriangle`, warning tones) when any item is AWAITING_CONFIRMATION
+    or FAILED.
+- Status banners above the timeline:
+  - SELF: none needed after the brief "Saving your plan…" `Alert` (tone info,
+    `Loader2`).
+  - AI: "Setting up {plan} and starting on flights, hotels, and activities…" and then
+    "Plan locked in — booking flights, hotels, and activities…" as an `Alert` tone info
+    with `Loader2`.
+  - AI test mode appends " (test mode)" to both.
 
 **Already chosen (409) / planning failed / no options / options fetch error:** see §4.5.
 
@@ -497,10 +596,15 @@ but it's owned by the revision-flow branch, which should build it to this visual
 |---|---|---|
 | ITINERARY_READY | `Columns3` | `bg-lagoon-50 text-lagoon-700` |
 | CLARIFICATION_NEEDED | `MessageCircleQuestion` | `bg-sunset-50 text-sunset-600` |
-| BUDGET_ALERT (if kept for "estimate over budget") | `AlertTriangle` | `bg-warning-50 text-warning-700` |
-| GENERAL, and any unknown/legacy kind (old BOOKING_CONFIRMED/BOOKING_FAILED rows on existing trips) | `Info` | `bg-sand-100 text-ink-700` |
+| BOOKING_CONFIRMED (AI mode) | `CheckCircle2` | `bg-success-50 text-success-700` |
+| BOOKING_FAILED (AI mode) | `XCircle` | `bg-danger-50 text-danger-700` |
+| BUDGET_ALERT (AI mode) | `AlertTriangle` | `bg-warning-50 text-warning-700` |
+| GENERAL, and any unknown kind | `Info` | `bg-sand-100 text-ink-700` |
 
-The booking-confirmed and booking-failed tiles are retired with the booking pipeline.
+In AI test mode, BOOKING_CONFIRMED rows get a trailing `FlaskConical` "Test" chip
+(`bg-warning-50 text-warning-700 text-xs rounded-full px-2`), so a sandbox confirmation
+never reads as a real reservation. BOOKING_FAILED and BUDGET_ALERT rows deep-link to the
+affected itinerary row (`href="#activity-{id}"`, with focus moved to that row on arrival).
 
 - Wrap the list in `aria-live="polite"` so new updates from the 4s poll are announced.
 - Empty: "No updates yet. We'll post here as your plan comes together." in small
@@ -519,7 +623,7 @@ one heading line, one explanation line, and one action. They are never a bare re
 | Options fetch error | `Alert` danger with `RefreshCw` "Try again" secondary button inside | Existing two-sentence copy unchanged |
 | No options | `Alert` warning, `Compass` icon | Existing copy |
 | Planning failed | `Card` with `border-l-4 border-l-warning-700`, `AlertTriangle`, h3 "We couldn't draft options for this trip", body = existing copy, secondary button "Plan a new trip" → `/` | Existing copy |
-| Already chosen (409) | `Alert` info, `CheckCircle2` | "A plan has already been chosen for this trip." (drop "booking is underway") |
+| Already chosen (409) | `Alert` info, `CheckCircle2` | "A plan has already been chosen for this trip." Add "Booking is underway." only if that trip is in AI mode |
 | Bookable item with no link | Inline in the row, see §4.7 | "No search link: missing {travel dates}" |
 | Landing submit error | `Alert` danger under prompt box | Existing |
 
@@ -529,24 +633,42 @@ Errors use `role="alert"`. Loading uses `role="status"`. Retry buttons say what 
 
 Shape: `inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium`
 + icon (14px) + label. In-progress states get the spinning `Loader2` (motion-safe), so
-there's always a word *and* an icon. The pill is now **trip-level only**. Per-booking pills
-(SEARCHING / OPTIONS_FOUND / AWAITING_CONFIRMATION / BOOKED / FAILED / CANCELLED) are
-retired, because we no longer book.
+there's always a word *and* an icon.
+
+**Trip-level statuses:**
 
 | Trip status | Label | Classes | Icon |
 |---|---|---|---|
 | DRAFT | Draft | `bg-sand-100 text-ink-700` | `PencilLine` |
 | PLANNING | Planning… | `bg-lagoon-50 text-lagoon-700` | `Loader2` (spin) |
 | CHOOSING | Choose a plan | `bg-lagoon-600 text-white` | `Columns3` (the user's turn, so it's the strongest pill) |
-| Post-choice status (whatever backend-dev names it, e.g. `CONFIRMED`/`READY`) | **Plan ready** | `bg-success-50 text-success-700` | `CheckCircle2` |
+| READY_TO_BOOK (SELF) | Plan ready | `bg-lagoon-50 text-lagoon-700` | `ListChecks` |
+| BOOKING (AI) | Booking… | `bg-info-50 text-info-700` | `Loader2` (spin) |
+| CONFIRMED (AI) | Confirmed | `bg-success-50 text-success-700` | `CheckCircle2` |
 | NEEDS_ATTENTION | Needs your input | `bg-warning-50 text-warning-700` | `AlertTriangle` |
 | COMPLETED | Completed | `bg-sand-100 text-ink-700` | `Flag` |
-| legacy `BOOKING` on old trips, or unknown | "Plan ready" if an itinerary exists, otherwise the raw status | `bg-sand-100 text-ink-700` | `Circle` |
+| (unknown) | raw status | `bg-sand-100 text-ink-700` | `Circle` |
 
-Don't label the post-choice state "Confirmed" or "Booked". Nothing has been booked
-until the user does it on the provider's site.
+- READY_TO_BOOK is deliberately **lagoon, not success-green**. The user still has to book
+  everything, so it must not look "done".
+- In AI test mode, CONFIRMED reads "Confirmed (test)", followed by the `FlaskConical`
+  icon.
 
-### 4.7 "Book it yourself" link-out (new, replaces all booking states)
+**Per-item booking statuses (AI mode only, §4.9).** These use the same pill shape:
+
+| Booking status | Label | Classes | Icon |
+|---|---|---|---|
+| SEARCHING | Searching… | `bg-info-50 text-info-700` | `Loader2` (spin) |
+| OPTIONS_FOUND | Options found | `bg-info-50 text-info-700` | `ListChecks` |
+| AWAITING_CONFIRMATION | Needs your input | `bg-warning-50 text-warning-700` | `HandCoins` |
+| BOOKED | Booked (test mode: "Booked (test)") | `bg-success-50 text-success-700` | `Check` |
+| FAILED | Not booked | `bg-danger-50 text-danger-700` | `XCircle` |
+| CANCELLED | Cancelled | `bg-sand-100 text-ink-500` | `Ban` |
+
+The FAILED label is "Not booked" rather than "Failed". It says what the user needs to
+know (they need to book it) and pairs with the fallback link.
+
+### 4.7 "Book it yourself" link-out (SELF mode, and the AI-mode fallback)
 
 One component, `components/BookLink.tsx`, used on every bookable item in the chosen
 itinerary. Data it needs per item: a provider display name (e.g. "Google Flights") and
@@ -579,12 +701,18 @@ the search will look for (e.g. "LIS → MEX · Mar 10").
 - **Never** render a URL that came from model output, even as a fallback. If backend
   marks a link as missing, the UI shows the no-link state, full stop.
 - **Option cards (CHOOSING):** no links on the cards. Links appear only after a plan is
-  chosen, so the comparison stays a comparison. The "4 to book yourself" fact sets the
-  expectation.
+  chosen, so the comparison stays a comparison.
+- **AI-mode fallback variant:** the same component with the eyebrow changed to "Book it
+  yourself instead". On FAILED and AWAITING_CONFIRMATION rows it renders at full size. On
+  SEARCHING rows it renders as a plain text link (`text-sm font-medium text-lagoon-700
+  underline-offset-2 hover:underline`, same icon and sr-only text) under the status
+  line, so it doesn't compete with an item the AI is still working on. It's never shown
+  on BOOKED rows.
 
-### 4.8 Per-day "things to book" checklist (optional, v2)
+### 4.8 Per-day "things to book" checklist (optional, v2, SELF mode only)
 
-A self-tracked checklist so the user can see what they've already booked elsewhere.
+A self-tracked checklist so the user can see what they've already booked elsewhere. It
+doesn't appear in AI mode, which has real per-item statuses.
 **We can't verify any of it, and the visuals must not pretend we can.**
 
 - **Placement:** inside each day card, under the activities, only when the day has bookable
@@ -605,6 +733,32 @@ A self-tracked checklist so the user can see what they've already booked elsewhe
   localStorage, add a caption "Saved on this device" so nobody expects it on their phone.
 - **Motion:** checkbox tick only, 150ms, motion-safe. No celebration.
 
+### 4.9 AI-mode itinerary rows: per-item booking states
+
+Each bookable row in an AI-mode trip has three parts:
+- Right side: the item pill from §4.6.
+- Under the title: a one-line status detail (small).
+- When the item isn't BOOKED: the §4.7 fallback.
+
+Give each row `id="activity-{id}"` so notifications can link to it.
+
+| State | Row treatment | Status detail line | Fallback |
+|---|---|---|---|
+| SEARCHING | No tint | ink-500: "Checking {provider} for this…" (or "Searching providers…" when no provider name is available) | Small text link "Book it yourself instead", plus caption ink-500 "The AI is still working on this one. If you book it yourself, tell us so we don't book it twice." |
+| BOOKED | No tint | ink-700: "Confirmation {REF}" with REF in `font-mono text-ink-900` and a 28px icon button (`Copy`, `aria-label="Copy confirmation reference"`, shows "Copied" for 2s via `aria-live`). Then the real price in tabular-nums: "· $412". **Test mode:** append "· Test booking, not a real reservation" in warning-700 | None |
+| AWAITING_CONFIRMATION | `bg-warning-50/60` row, `border-l-4 border-l-warning-700` | ink-900 `font-medium`: the reason in plain words, e.g. "$420 would put you $120 over budget." Approve/skip actions go here **only if backend exposes them**. Don't render buttons that do nothing | Full-size `BookLink`, "Book it yourself instead" |
+| FAILED | No tint (the pill carries it) | danger-700: "Not booked: {failureReason}" in plain words. A test-mode NOT_CONFIGURED failure reads "Not booked: this provider isn't connected yet." Don't soften it into "something went wrong" (commitment 4) | Full-size `BookLink`, "Book it yourself instead" |
+| CANCELLED | Text ink-500 | "Cancelled" | Full-size `BookLink` |
+
+- When the status changes on the 4s poll, the pill swaps with a 200ms crossfade
+  (motion-safe). The row's status detail sits inside a per-row `aria-live="polite"`
+  region, so screen-reader users hear "Booked, confirmation ABC123" without the whole
+  list re-announcing.
+- **Risk to flag (backend-dev):** the fallback link on SEARCHING items invites the user to
+  book something the AI may then also book. The caption tells them to say so, but there's
+  no "I booked this myself, stop" control yet. If backend adds one, put it as a secondary
+  text button next to the fallback link.
+
 ---
 
 ## 5. Accessibility checklist (applies to everything above)
@@ -614,8 +768,12 @@ A self-tracked checklist so the user can see what they've already booked elsewhe
 - Visible focus everywhere: `focus-visible:ring-2 ring-lagoon-600 ring-offset-2`. Never
   `outline-none` without a replacement (today's inputs remove the outline and only shift
   a border shade).
-- Color is never the only signal. Tiers have icon + eyebrow, statuses have icon + word, and
-  estimates are always striped.
+- Color is never the only signal. Tiers have icon + eyebrow, and statuses have icon + word.
+  Not-final money (estimates, pending) is always striped, and the AI-mode estimate is a
+  labelled marker. Test mode is always spelled out in words, never just shown as a color.
+- The booking-mode choice is a native radio group inside a `<fieldset>` with a
+  `<legend>`, and the test-mode caveat is inside the AI option's label, so it gets read
+  out with it.
 - Touch targets are ≥ 44px tall on mobile (chips `py-2` + 14px text ≈ 38px, so use `py-2.5`
   on `<sm`).
 - `aria-live="polite"` on notifications and on the status banner, `role="alert"` on
@@ -638,8 +796,9 @@ A self-tracked checklist so the user can see what they've already booked elsewhe
    settings, `::selection`, and the reduced-motion block.
 4. Build `components/ui/` primitives: Button (primary/secondary), Card, Input/Textarea,
    Chip, Alert.
-5. Restyle `StatusPill` per §4.6. It's used everywhere, so it changes the whole app's feel
-   cheaply.
+5. Restyle `StatusPill` per §4.6, covering the trip statuses (including READY_TO_BOOK)
+   and the per-item booking statuses, with test-mode label variants. It's used
+   everywhere, so it changes the whole app's feel cheaply.
 
 **P1: the pages the product owner sees first:**
 6. Landing (§4.2): header/brand mark, sunrise hero + contour pattern, new H1/subhead,
@@ -649,28 +808,38 @@ A self-tracked checklist so the user can see what they've already booked elsewhe
    "Pace: …", named places + RatingBadge restyle, honesty notes at `text-sm`, choosing
    and locked states, info vs danger alert tone. **Ship with the neutral header** until
    backend-dev persists `variant`.
-8. Trip header band + BudgetBar redesign as **estimate-only** (striped fill, "~" figures,
-   always-visible "not live prices" footnote, warning-tone over-estimate state).
-9. `BookLink` component (§4.7) and the itinerary rows that use it: provider name,
-   `ExternalLink` icon, new tab, sr-only "(opens in a new tab)", what-it-searches line,
-   and the honest no-link state. This is the product's main action now, so it's P1.
-10. Clarification card (sunset, not amber) with focus management.
+8. **Booking-mode radio cards** (§4.3 "Booking mode"):
+   - Native radio fieldset, default SELF.
+   - AI card caveat slot in all three states (test / live / unavailable). The test-mode
+     caveat ships now.
+   - "Choose" button label follows the mode.
+   - The fieldset locks along with the cards after choosing.
+9. `BookLink` component (§4.7): provider name, `ExternalLink` icon, new tab, sr-only
+   "(opens in a new tab)", what-it-searches line, honest no-link state, and the "Book it
+   yourself instead" fallback variant (full and text-link sizes).
+10. Trip header band (with the booking-mode and test-mode chips) and **BudgetBar in both
+    modes**:
+    - SELF: estimate-only, striped, "~" figures, warning when over.
+    - AI: solid committed + striped pending, estimate marker and legend, danger when over,
+      test-mode eyebrow and footnote.
+11. Clarification card (sunset, not amber) with focus management.
 
 **P2: the rest of the dashboard:**
-11. Itinerary timeline with kind icons, bookable-row tint and per-day "N to book" chip.
-    Remove per-row booking pills and the booking banners.
-12. Notifications as an icon list with relative times, unread badge, `aria-live`, and
-    legacy kinds falling back to the GENERAL tile.
-13. All empty/loading/error states from §4.5 (skeletons that mirror real layouts).
-14. Remove leftover booking copy app-wide: "Starting bookings…", "booking is underway",
-    "nothing is being booked yet", "Real prices come from the provider when we book",
-    plus the booking statuses in `StatusPill`.
-15. Motion pass: hover lift, enter fade/rise, budget width transition. All
+12. Itinerary timeline with kind icons. SELF: link-out rows, tint and "N to book" chip.
+    AI: per-item states per §4.9 (confirmation ref with copy button, test-booking
+    labels, plain failure reasons, fallback links on every non-BOOKED row), per-row
+    `aria-live`, and the "N of M booked" day chip.
+13. Notifications as an icon list with relative times, unread badge and `aria-live`.
+    Includes the AI booking kinds, the test chip, and deep links to the affected row.
+14. All empty/loading/error states from §4.5 (skeletons that mirror real layouts).
+15. Copy audit: every "we book" line is conditional on AI mode, and every AI-mode money or
+    confirmation surface says "test" while providers are sandbox-only.
+16. Motion pass: hover lift, enter fade/rise, budget width transition, pill crossfade. All
     `motion-safe:`. Verify with the OS "reduce motion" setting on.
 
 **Optional / v2:**
-16. Per-day "Things to book" checklist (§4.8). It needs a persistence decision from
-    backend-dev (API field vs localStorage + "Saved on this device").
+17. Per-day "Things to book" checklist, SELF mode only (§4.8). It needs a persistence
+    decision from backend-dev (API field vs localStorage + "Saved on this device").
 
 **Dependencies / other owners:**
 - **backend-dev:**
@@ -678,20 +847,29 @@ A self-tracked checklist so the user can see what they've already booked elsewhe
     colors in item 7.
   - For each bookable item, expose: provider display name, deterministic URL (or an
     explicit "no link" plus the missing field), and optionally a short search summary.
-  - Expose the chosen option's estimate to `BudgetBar`.
-  - Tell frontend-dev the name of the post-choice trip status.
+  - Expose the chosen option's estimate to `BudgetBar` in both modes.
+  - Expose the trip's booking mode (SELF/AI) and a provider-readiness flag (test / live /
+    unavailable). The flag drives the AI caveat slot and every test-mode label.
+  - Expose the per-booking confirmation reference and a human-readable reason for
+    AWAITING_CONFIRMATION.
+  - Decide whether approve/skip actions exist for AWAITING_CONFIRMATION, and whether
+    there's a "I booked this myself, stop" control (§4.9 risk).
 - **revision-flow branch:** build the persistent revise dock to the §4.3 spec in every
   trip status. frontend-dev should add the `pb-32` page padding now.
 - **qa-tester:** check every state in §4.5 and §4.6 renders, not just the happy path
-  (including NOT_CONFIGURED ratings, estimate over budget, 409, bookable items with no
-  link, and the options fetch error), at 375px and 1280px, with reduce-motion on, plus a
-  keyboard-only pass through landing → choose → opening a "Search on …" link. Also verify
+  in **both booking modes**. That includes NOT_CONFIGURED ratings, the estimate over
+  budget (SELF), real over budget (AI), every per-item state with and without test mode,
+  409, bookable items with no link, the AI card in its unavailable state, and the options
+  fetch error. Test at 375px and 1280px, with reduce-motion on, plus keyboard-only passes
+  through landing → mode choice → choose → opening a "Search on …" link. Also verify
   that every rendered link URL comes from the deterministic builder, never from model
   text.
 
 ## 7. Out of scope for this pass
 - Dark mode. Tokens are named by role so a dark set can be added later.
-- Any payment, checkout or in-app booking UI. The product no longer books or charges.
+- Payment-method collection and checkout for **live** AI booking. That needs its own
+  design pass before any provider leaves sandbox. Until then the AI card's live state
+  must not ship.
 - Destination photography, maps or illustrations. Revisit only with a licensed source
   (e.g. a provider's own property images under their terms) and only where the image is
   of the actual place being booked.

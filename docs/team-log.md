@@ -299,3 +299,39 @@ anything.** What changed in the spec:
 (or an explicit missing-link reason) and optionally a short search summary. It also needs
 the chosen option's estimate for the budget bar and the name of the post-choice trip
 status. Variant-key persistence is still needed for tier colors.
+
+**2026-11-08 -- ux-designer** -- Revised `docs/visual-design.md` again on
+`ux-designer/visual-refresh`: **booking is now the user's choice** (SELF link-out by
+default, or AI booking). What changed:
+- **Booking-mode radio cards** sit above the options grid, in a native fieldset with
+  SELF as the default.
+  - The AI card has a caveat slot with three states: test (now: "Booking providers aren't
+    connected yet. The AI will try in test mode, and anything it can't book falls back to
+    links."), live, and unavailable.
+  - The test caveat is visible before the user selects AI.
+  - The "Choose" button label follows the mode ("Choose and start booking" in AI mode).
+- **Status pills:** SELF goes to READY_TO_BOOK "Plan ready" (lagoon, deliberately not
+  success-green). AI goes BOOKING, then CONFIRMED (shown as "Confirmed (test)" in test
+  mode) or NEEDS_ATTENTION.
+- **Per-item states return for AI mode only** (new §4.9):
+  - SEARCHING, BOOKED with a confirmation ref and copy button, AWAITING_CONFIRMATION
+    with the reason in plain words, and FAILED as "Not booked: {reason}".
+  - Every item that isn't BOOKED shows the "Book it yourself instead" fallback.
+  - Test-mode bookings say "Test booking, not a real reservation".
+- **BudgetBar has two modes.** SELF is estimate-only, as before. AI shows solid committed
+  plus striped pending, with the plan estimate as a labelled marker. Over budget is danger
+  in AI mode and warning in SELF mode. The test-mode footnote says "Nothing has been
+  charged."
+- **Notifications:** booking notifications are back for AI mode, with a "Test" chip and
+  deep links to the affected row.
+- **Out of scope:** payment-method collection for *live* AI booking needs its own design
+  pass before any provider leaves sandbox.
+
+**backend-dev:** the UI needs these exposed:
+- The booking mode and a provider-readiness flag (test / live / unavailable).
+- The confirmation reference.
+- A human-readable AWAITING_CONFIRMATION reason.
+
+Please also decide whether approve/skip actions exist. Flagged risk: the fallback link on
+SEARCHING items could lead to a double booking, and there's no "I booked this myself,
+stop" control yet.
