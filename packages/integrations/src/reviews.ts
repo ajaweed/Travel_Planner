@@ -46,6 +46,7 @@ const SEARCH_FIELD_MASK = [
   "places.id",
   "places.displayName",
   "places.formattedAddress",
+  "places.location",
   "places.rating",
   "places.userRatingCount",
 ].join(",");
@@ -230,6 +231,10 @@ async function textSearch(query: string, key: string): Promise<ProviderResult<Pl
         placeId: place.id,
         name: place.displayName?.text ?? query,
         formattedAddress: place.formattedAddress,
+        location:
+          place.location && Number.isFinite(place.location.latitude) && Number.isFinite(place.location.longitude)
+            ? { lat: place.location.latitude!, lon: place.location.longitude! }
+            : undefined,
         rating: place.rating,
         userRatingsTotal: place.userRatingCount,
         excerpts: [],
@@ -375,6 +380,7 @@ function mapExcerpt(dto: PlaceReviewDto): PlaceReviewExcerpt | null {
 
 type PlaceDto = {
   id?: string;
+  location?: { latitude?: number; longitude?: number };
   displayName?: { text?: string; languageCode?: string };
   formattedAddress?: string;
   rating?: number;
@@ -397,7 +403,6 @@ type PlaceDetailsDto = {
 };
 
 type RestaurantDto = PlaceDto & {
-  location?: { latitude?: number; longitude?: number };
   businessStatus?: string;
   googleMapsUri?: string;
   types?: string[];

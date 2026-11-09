@@ -940,6 +940,17 @@ Give each row `id="activity-{id}"` so notifications can link to it.
   waymarked routes). A standing caveat appears wherever outings are suggested: "Trail details
   are AI-suggested: check conditions, closures and permits locally…".
 
+### 4.12 Weather (added 2026-11-08)
+- **Day chip** under each day's summary: icon (sun / cloud-sun / rain / snow), "high° / low°",
+  rain %, and always "forecast" or "typical". Typical = the same date averaged over the last 3
+  years; for those, the rain % is the share of years with rain. The chip's title says where the
+  reading is for: around the day's Google-verified stops, at the hotel, or at the destination's
+  centre. With the destination's centre above 500 m it adds "· at 1,050 m", because a region's
+  centre can be a mountain.
+- **Outdoor-stop warnings** (warning-700): heat (>= 30°C, very hot >= 35°C), rain (>= 60% or
+  >= 5 mm), freezing, and cool water for beach/water outings. Typical days are worded as "Usually
+  hot" / "Often rainy on this date", never as a prediction.
+
 ## 7. Out of scope for this pass
 - Dark mode. Tokens are named by role so a dark set can be added later.
 - Payment-method collection and checkout for **live** AI booking. That needs its own

@@ -19,6 +19,9 @@ import { notify } from "./agents/notificationAgent";
 import { attachRealReviews } from "./reviewLookup";
 import { checkOutdoorPlaces, checkRestaurants } from "./restaurantChecks";
 import { checkTrails } from "./trailChecks";
+import { climateSummary } from "./weather";
+
+const CLIMATE_TIMEOUT_MS = 6_000;
 import { dietaryFromBrief, mergeDietary, type Dietary } from "./dietary";
 import { mergeOutdoorNeeds, outdoorNeedsFromBrief, type OutdoorNeeds } from "./outdoors";
 import type {
@@ -190,8 +193,15 @@ export async function generateItineraryOptions(tripId: string): Promise<void> {
   // One call per variant, in parallel. allSettled, not all: a single variant
   // failing (bad tool JSON, truncation) should cost the user one option, not
   // the whole trip.
+  // Typical (or forecast) weather for the dates, so outdoor plans suit the
+  // season. Optional: capped at a few seconds and never fails planning.
+  const climate = await Promise.race([
+    climateSummary(brief.destinations, brief.startDate, brief.endDate),
+    new Promise<undefined>((r) => setTimeout(() => r(undefined), CLIMATE_TIMEOUT_MS)),
+  ]);
+
   const settled = await Promise.allSettled(
-    ITINERARY_VARIANTS.map((variant) => runItineraryAgent(brief, variant)),
+    ITINERARY_VARIANTS.map((variant) => runItineraryAgent(brief, variant, climate)),
   );
 
   const drafts = [];

@@ -27,6 +27,9 @@ export type OutdoorView = OutdoorDraft & {
 export function trailLengthNote(planKm: number | undefined, trail: TrailCheck | undefined): string | undefined {
   if (!trail || trail.status !== "FOUND" || !trail.lengthKm || !planKm || trail.lengthKm > 30) return undefined;
   if (Math.abs(planKm - trail.lengthKm) / trail.lengthKm <= 0.5) return undefined;
+  // About twice the mapped length is almost always there and back.
+  const ratio = planKm / trail.lengthKm;
+  if (ratio >= 1.5 && ratio <= 2.5) return undefined;
   return `OpenStreetMap maps this trail at ${trail.lengthKm} km; the plan says ${planKm} km. Check which section you'll walk.`;
 }
 

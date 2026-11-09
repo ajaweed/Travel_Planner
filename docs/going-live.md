@@ -251,3 +251,9 @@ you apply.
 | Hotels — Amadeus / Expedia / Booking.com | No self-serve production tier for any of the three | Signed partner agreement in all three cases | Expedia most plausible; Booking.com least |
 | Viator — Full + Booking Access | `partnerresources.viator.com` / `affiliateapi@tripadvisor.com` | API certification + volume-sized deposit | Yes, with certification effort |
 | Stripe | `dashboard.stripe.com/register` → onboarding | Business/identity (KYC) verification | Yes, sole proprietor supported |
+
+## Weather (Open-Meteo)
+The weather on trip pages and in planning comes from Open-Meteo's free API, which is for
+non-commercial use. Before a commercial launch, subscribe to their commercial plan
+(https://open-meteo.com/en/pricing) and point `integrations/weather.ts` at the customer
+endpoint with the API key. Nothing else changes.

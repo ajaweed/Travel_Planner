@@ -27,6 +27,7 @@ import { TripPhotoBanner } from "../../components/TripPhotoBanner";
 import type { Photo } from "../../components/DestinationPhoto";
 import { LocalFoodSection, NeedsBadges } from "../../components/Food";
 import { OutdoorCaveat } from "../../components/Outdoor";
+import type { DayWeather } from "../../components/Weather";
 import { Alert, buttonClasses, CARD_CLASSES, INPUT_CLASSES } from "../../components/ui";
 
 type TripData = any; // the API route returns Prisma's shape directly; tighten with a shared type once it stabilizes.
@@ -65,6 +66,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
     .flatMap((d: any) => d.activities.map((a: any) => a.id))
     .join(",");
   const [stopPhotos, setStopPhotos] = useState<Record<string, Photo>>({});
+  const [weather, setWeather] = useState<{ days: Record<string, DayWeather>; warnings: Record<string, string[]> }>();
 
   // Stop photos are fetched once per itinerary, not on the 4s poll: they come
   // from Wikimedia and never change while the page is open. Decoration only,
@@ -76,6 +78,13 @@ export default function TripPage({ params }: { params: { id: string } }) {
       .then((r) => (r.ok ? r.json() : { stops: {} }))
       .then((j) => {
         if (!cancelled) setStopPhotos(j?.stops ?? {});
+      })
+      .catch(() => {});
+    // Weather too: once per itinerary, decoration-grade (failures are silent).
+    fetch(`/api/trips/${params.id}/weather`)
+      .then((r) => (r.ok ? r.json() : undefined))
+      .then((j) => {
+        if (!cancelled && j?.days) setWeather({ days: j.days, warnings: j.warnings ?? {} });
       })
       .catch(() => {});
     return () => {
@@ -526,7 +535,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
             <h2 id="itinerary-heading" className="font-display text-2xl font-semibold text-ink-900">
               Your itinerary
             </h2>
-            <ItineraryTimeline days={trip.itinerary} aiMode={aiMode} testMode={testMode} stopPhotos={stopPhotos} />
+            <ItineraryTimeline days={trip.itinerary} aiMode={aiMode} testMode={testMode} stopPhotos={stopPhotos} weather={weather} />
             {trip.itinerary.some((d: any) => d.activities.some((a: any) => a.outdoor)) && (
               <div className="mt-6">
                 <OutdoorCaveat />

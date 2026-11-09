@@ -16,6 +16,7 @@ import { BookingLinks } from "./BookingLinks";
 import { PhotoCredit, PhotoFill, type Photo } from "./DestinationPhoto";
 import { ConflictNote, DiningDetail, type DietConflict, type Dining } from "./Food";
 import { OutdoorDetail, outdoorIcon, type Outdoor } from "./Outdoor";
+import { WeatherChip, WeatherWarnings, type DayWeather } from "./Weather";
 import { ResearchLinks } from "./ResearchLinks";
 import { StatusPill } from "./StatusPill";
 import { CARD_CLASSES, fmtMoney } from "./ui";
@@ -185,12 +186,15 @@ function ActivityRow({
   aiMode,
   testMode,
   photo: foundPhoto,
+  weatherWarnings,
 }: {
   activity: Activity;
   aiMode: boolean;
   testMode: boolean;
   /** Photo of the named place this stop is at, if one was confidently found. */
   photo?: Photo;
+  /** Weather warnings for this outdoor stop on its day (heat, rain, ice). */
+  weatherWarnings?: string[];
 }) {
   const [photoBroken, setPhotoBroken] = useState(false);
   const photo = photoBroken ? undefined : foundPhoto;
@@ -237,6 +241,7 @@ function ActivityRow({
           {activity.description && <p className="mt-0.5 text-sm text-ink-500">{activity.description}</p>}
           {activity.dining && <DiningDetail dining={activity.dining} />}
           {activity.outdoor && <OutdoorDetail outdoor={activity.outdoor} />}
+          <WeatherWarnings warnings={weatherWarnings} />
           <ConflictNote conflicts={activity.conflicts} className="mt-1.5" />
           <ResearchLinks links={activity.research} subject={activity.title} />
           {photo && <PhotoCredit photo={photo} label={photo.subject} className="mt-1" />}
@@ -271,12 +276,15 @@ export function ItineraryTimeline({
   aiMode,
   testMode,
   stopPhotos = {},
+  weather,
 }: {
   days: Day[];
   aiMode: boolean;
   testMode: boolean;
   /** Activity id -> photo of the place (from /api/trips/:id/photos). */
   stopPhotos?: Record<string, Photo>;
+  /** From /api/trips/:id/weather: per day, and warnings per outdoor stop. */
+  weather?: { days: Record<string, DayWeather>; warnings: Record<string, string[]> };
 }) {
   return (
     <ol className="relative ml-5 mt-8 space-y-6 border-l-2 border-sand-300">
@@ -298,6 +306,7 @@ export function ItineraryTimeline({
                   )}
                 </h3>
                 {day.summary && <p className="mt-1 text-sm text-ink-700">{day.summary}</p>}
+                <WeatherChip weather={weather?.days[day.id]} />
               </div>
               <DayChip day={day} aiMode={aiMode} />
             </div>
@@ -309,6 +318,7 @@ export function ItineraryTimeline({
                   aiMode={aiMode}
                   testMode={testMode}
                   photo={stopPhotos[activity.id]}
+                  weatherWarnings={weather?.warnings[activity.id]}
                 />
               ))}
             </ul>

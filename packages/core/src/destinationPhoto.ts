@@ -361,3 +361,9 @@ export async function getDestinationPhotos(
   const results = await getPlaceResults(places, opts);
   return new Map([...results].map(([p, r]) => [p, r.photo]));
 }
+
+/** Coordinates for places (cached with their photos; Wikipedia/Wikivoyage). Missing when unknown. */
+export async function cityCoords(places: string[]): Promise<Map<string, Coords>> {
+  const results = await getPlaceResults(places);
+  return new Map([...results].flatMap(([p, r]) => (r.coords ? [[p, r.coords] as const] : [])));
+}
