@@ -694,3 +694,51 @@ added a Google Places key and asked to verify the restaurants the AI recommends.
 The Rome test trip's stored checks were re-keyed in dev.db after the key format change (test
 data on this branch only). Tests: 251 core + 16 integrations; typecheck and build pass.
 Merged to `main` and pushed. Reviewed by `/code-review`.
+
+**2026-11-08 -- backend-dev** -- START `backend-dev/outdoors`: product owner asked for "the
+same for hikes and nature excursions" as was done for food. Part 1 of 2 (weather is part 2):
+fitness/access needs on the brief (from the prompt plus landing-page choices, merged in code);
+the itinerary agent adds `outdoor` details to hikes and nature stops (difficulty, distance,
+elevation, duration, permits, seasonal and safety notes); deterministic checks against the
+needs and against the stated numbers; trailheads/parks verified on Google Places (the
+restaurant checker, generalised); trail lengths from OpenStreetMap via Waymarked Trails.
+
+**2026-11-08 -- backend-dev** -- FINISH `backend-dev/outdoors` (part 1 of 2; weather is part 2).
+- Fitness/access needs (`TripBrief.outdoors`: maxDifficulty, access = limited mobility / young
+  kids / wheelchair, notes) come from the prompt plus a new landing-page "Fitness or access
+  needs?" picker, merged in code (the stricter limit wins) and carried through clarification.
+- The itinerary agent adds `outdoor` blocks to hikes and nature stops: type, honest difficulty,
+  km, climb, hours, placeName, trailName, and permit/season/safety/access notes. Outdoor needs
+  are hard constraints.
+- Code checks (`core/outdoors.ts`): over-limit outings, difficulty contradicted by the numbers
+  ("Called easy, but 12 km with 900 m of climbing is more like hard."), and access flags.
+- Trailheads/parks/beaches: the Google place check, generalised (`OUTDOOR_SPEC`: outdoor
+  generic words, 150 km, cap 12). Named trails: OpenStreetMap via Waymarked Trails
+  (`integrations/trails`, `core/trailChecks`), with a length note when a short trail's mapped
+  length differs a lot from the plan.
+- UI: outdoor stop details (difficulty pill, km/climb/time, checks, notes, flags, Maps and
+  trail links), option-card summaries with named flags, needs badges, and a standing caveat.
+- Live: Madeira, partner + 6-year-old, needs "moderate" + young kids. The concierge read
+  "family-friendly" from the prompt, so the stricter "easy" won. Every outing came back easy
+  and child-appropriate, all places were found on Google, and the levadas were found on
+  OpenStreetMap ("PR 10 - Levada do Furado · 10.7 km mapped", with a which-section note).
+- Found by tests: access tags with underscores ("young_kids") never matched our own word
+  regexes, so every ticked access need was being dropped. Fixed.
+`/code-review` (medium) raised 10 findings; all fixed:
+- Trail checks could stall generation for minutes: cache first, a 20 s overall deadline, and
+  a stop at the first provider error.
+- Restaurant and outdoor checks doubled the Places burst: one process-wide limit of 4.
+- Outdoor places without city coordinates were called "not found": now left unchecked
+  (`requireCoords`).
+- "Nothing too strenuous" read as hard: negated hard words now mean moderate, and ranges take
+  the higher end.
+- Cached trail runs still fetched city coordinates: now only for misses.
+- Outdoor check status is now stored (`outdoorLookup`) and shown (`PlaceCheckNote`).
+- Notes duplicated across clarification rounds (outdoor and dietary): merges dedupe by part.
+- Shared `collectNamedPairs` / `resultsPerOption` / `DraftLike` instead of a copy in
+  trailChecks.
+- `NeedsBadges` gives each group of needs its own icon (no salad next to "Wheelchair
+  access").
+- architecture.md: findRestaurant -> findPlace.
+Tests: 277 core + 20 integrations; typecheck and build pass. Test trip: cmw8hs9nh... (Madeira).
+Merged to `main` and pushed. Reviewed by `/code-review`.

@@ -243,7 +243,7 @@ describe("lookupPlaceReviews", () => {
   });
 });
 
-describe("findRestaurant", () => {
+describe("findPlace", () => {
   it("sends name + city with a location bias and maps Google's fields", async () => {
     let body: any;
     let headers: any;
@@ -270,8 +270,8 @@ describe("findRestaurant", () => {
         });
       }),
     );
-    const { findRestaurant } = await import("./reviews");
-    const r = await findRestaurant({ name: "Taberna do Mercado", city: "Lisbon", near: { lat: 38.72, lon: -9.13 } });
+    const { findPlace } = await import("./reviews");
+    const r = await findPlace({ name: "Taberna do Mercado", city: "Lisbon", near: { lat: 38.72, lon: -9.13 } });
     expect(body.textQuery).toBe("Taberna do Mercado, Lisbon");
     expect(body.locationBias.circle.center).toEqual({ latitude: 38.72, longitude: -9.13 });
     expect(headers["X-Goog-FieldMask"]).toContain("places.businessStatus");
@@ -295,18 +295,18 @@ describe("findRestaurant", () => {
 
   it("no results -> NO_AVAILABILITY; no key -> NOT_CONFIGURED without a call", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({})));
-    const { findRestaurant } = await import("./reviews");
-    expect(await findRestaurant({ name: "Nowhere" })).toEqual({ ok: false, reason: "NO_AVAILABILITY" });
+    const { findPlace } = await import("./reviews");
+    expect(await findPlace({ name: "Nowhere" })).toEqual({ ok: false, reason: "NO_AVAILABILITY" });
     delete process.env.GOOGLE_PLACES_API_KEY;
     const f = vi.fn();
     vi.stubGlobal("fetch", f);
-    expect((await findRestaurant({ name: "X" })).ok).toBe(false);
+    expect((await findPlace({ name: "X" })).ok).toBe(false);
     expect(f).not.toHaveBeenCalled();
   });
 
   it("quota errors map to RATE_LIMITED", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => textResponse('{"error":{"status":"RESOURCE_EXHAUSTED"}}', 429)));
-    const { findRestaurant } = await import("./reviews");
-    expect((await findRestaurant({ name: "X", city: "Y" })) as { reason?: string }).toMatchObject({ reason: "RATE_LIMITED" });
+    const { findPlace } = await import("./reviews");
+    expect((await findPlace({ name: "X", city: "Y" })) as { reason?: string }).toMatchObject({ reason: "RATE_LIMITED" });
   });
 });

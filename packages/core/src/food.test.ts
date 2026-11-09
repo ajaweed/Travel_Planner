@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DietarySchema } from "./dietary";
-import { activityConflicts, diningView, localFoodView, planFood } from "./food";
+import { activityConflicts, diningView, localFoodView, planExtras } from "./food";
 import { ItineraryOptionDraftSchema, TripBriefSchema } from "./agents/types";
 
 const halalPeanut = DietarySchema.parse({ requirements: ["halal"], allergies: ["peanuts"] });
@@ -60,7 +60,7 @@ describe("localFoodView", () => {
   });
 });
 
-describe("planFood", () => {
+describe("planExtras", () => {
   const draft = {
     days: [
       {
@@ -84,10 +84,10 @@ describe("planFood", () => {
   ];
 
   it("attaches meals by day and position, lists local foods, and checks every stop", () => {
-    const f = planFood(saved, JSON.stringify(draft), undefined, () => "Lisbon", ["Lisbon"]);
+    const f = planExtras(saved, JSON.stringify(draft), { dietary: undefined }, () => "Lisbon", ["Lisbon"]);
     expect([...f.dining.keys()]).toEqual(["a2"]);
     const withWine = [{ dayIndex: 0, activities: [{ id: "w", order: 5, title: "Port wine cellar visit" }] }];
-    expect(planFood(withWine, null, halalPeanut, () => "Porto", ["Porto"]).conflicts.get("w")).toEqual([
+    expect(planExtras(withWine, null, { dietary: halalPeanut }, () => "Porto", ["Porto"]).conflicts.get("w")).toEqual([
       { need: "Halal", words: ["wine", "port wine"] },
     ]);
     expect(f.dining.get("a2")?.restaurantName).toBe("Tasca X");
@@ -96,12 +96,12 @@ describe("planFood", () => {
 
   it("never attaches a meal to a different activity (title must match)", () => {
     const edited = [{ dayIndex: 0, activities: [{ id: "a1", order: 0, title: "Flight" }, { id: "a2", order: 1, title: "Museum" }] }];
-    expect(planFood(edited, JSON.stringify(draft), undefined, () => "Lisbon", ["Lisbon"]).dining.size).toBe(0);
+    expect(planExtras(edited, JSON.stringify(draft), { dietary: undefined }, () => "Lisbon", ["Lisbon"]).dining.size).toBe(0);
   });
 
   it("survives missing or broken drafts", () => {
-    expect(planFood(saved, null, undefined, () => undefined, []).localFoods).toEqual([]);
-    expect(planFood(saved, "{not json", undefined, () => undefined, []).dining.size).toBe(0);
+    expect(planExtras(saved, null, { dietary: undefined }, () => undefined, []).localFoods).toEqual([]);
+    expect(planExtras(saved, "{not json", { dietary: undefined }, () => undefined, []).dining.size).toBe(0);
   });
 });
 

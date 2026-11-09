@@ -1,4 +1,5 @@
-// Checks the restaurants the itinerary agent names against Google Places:
+// Checks the restaurants (and, with OUTDOOR_SPEC, the trailheads/parks/beaches)
+// the itinerary agent names against Google Places:
 // does the place exist where the plan says, is it open, and what do people
 // rate it? Runs once while options are generated, like reviewLookup.ts.
 //
@@ -86,15 +87,15 @@ const GENERIC = new Set(
  *   Google's name must be those words too, with nothing distinctive of its
  *   own -- otherwise any "Da Mario Italian Restaurant" would "verify" it.
  */
-export function nameMatches(requested: string, googleName: string, city?: string): boolean {
+export function nameMatches(requested: string, googleName: string, city?: string, generic: Set<string> = GENERIC): boolean {
   const cityWords = city ? tokens(city) : [];
   const notCity = (t: string) => !cityWords.some((c) => sameWord(t, c));
   const req = tokens(requested).filter(notCity);
   const got = tokens(googleName).filter(notCity);
   const has = (words: string[], t: string) => words.some((w) => sameWord(t, w));
-  const gotDistinctive = got.filter((t) => !GENERIC.has(t));
+  const gotDistinctive = got.filter((t) => !generic.has(t));
 
-  const distinctive = req.filter((t) => !GENERIC.has(t));
+  const distinctive = req.filter((t) => !generic.has(t));
   if (distinctive.length === 0) {
     return req.length > 0 && gotDistinctive.length === 0 && req.every((t) => has(got, t));
   }
@@ -104,8 +105,13 @@ export function nameMatches(requested: string, googleName: string, city?: string
 }
 
 /** Is the place in the city? By distance when both have coordinates, else by its address naming the city. */
-export function inCity(place: RestaurantPlace, city: string, cityCoords?: Coords): boolean {
-  if (cityCoords && place.location) return distanceKm(cityCoords, place.location) <= MAX_DISTANCE_FROM_CITY_KM;
+export function inCity(
+  place: RestaurantPlace,
+  city: string,
+  cityCoords?: Coords,
+  maxDistanceKm: number = MAX_DISTANCE_FROM_CITY_KM,
+): boolean {
+  if (cityCoords && place.location) return distanceKm(cityCoords, place.location) <= maxDistanceKm;
   // Addresses use local names ("Lisboa"): compare the first five letters.
   const stem = (w: string) => w.slice(0, 5);
   const cityStems = tokens(placeLabel(city)).map(stem);
@@ -141,45 +147,85 @@ function toCheck(place: RestaurantPlace): RestaurantCheck {
   };
 }
 
-type DraftLike = {
+export type DraftLike = {
   days: Array<{
     activities: Array<{
       title: string;
       description?: string | null;
       bookable?: { kind: string; candidateName?: string; searchHint?: string } | null;
       dining?: { restaurantName?: string } | null;
+      outdoor?: { placeName?: string; trailName?: string } | null;
     }>;
   }>;
 };
 
-type Find = typeof reviews.findRestaurant;
-type Result = { perOption: Array<Record<string, RestaurantCheck>>; status: RestaurantLookupStatus };
+type ActivityLike = DraftLike["days"][number]["activities"][number];
+
+/** What to check and how strictly: shared by restaurants and outdoor places. */
+export type PlaceCheckSpec = {
+  /** The name to check for an activity, if any. */
+  pick: (a: ActivityLike) => string | undefined;
+  /** Words that say what kind of place it is, not which one. */
+  generic: Set<string>;
+  maxDistanceKm: number;
+  /** Most distinct (name, city) pairs checked per generation. */
+  cap: number;
+  /**
+   * Without the city's coordinates, leave the name unchecked rather than fall
+   * back to "does the address name the city": day-trip parks and beaches are
+   * outside the city, so that fallback would call real places "not found".
+   */
+  requireCoords?: boolean;
+};
+
+export const RESTAURANT_SPEC: PlaceCheckSpec = {
+  pick: (a) => a.dining?.restaurantName,
+  generic: GENERIC,
+  maxDistanceKm: MAX_DISTANCE_FROM_CITY_KM,
+  cap: MAX_RESTAURANT_CHECKS_PER_GENERATION,
+};
+
+// Trailheads, parks and beaches: "Sintra-Cascais Natural Park" matches on
+// "Sintra"/"Cascais", never on "Natural Park". Local-language words included.
+const OUTDOOR_GENERIC = new Set(
+  (
+    "park parque parco national nacional nazionale natural nature reserve reserva riserva protected regional state " +
+    "trail trilho sendero sentiero path route rota ruta walk hike loop circuit trailhead area " +
+    "mount mountain mountains monte montes serra sierra peak pico summit hill hills " +
+    "beach praia playa spiaggia lake lago lagoa river rio falls waterfall cascata cascada " +
+    "viewpoint miradouro mirador belvedere forest floresta bosque woods garden gardens jardim botanical " +
+    "valley vale canyon gorge cave caves gruta island ilha isla coast costa cliff cliffs bay baia " +
+    "the and"
+  ).split(" "),
+);
+
+export const OUTDOOR_SPEC: PlaceCheckSpec = {
+  pick: (a) => a.outdoor?.placeName,
+  generic: OUTDOOR_GENERIC,
+  // Day trips: national parks and coastlines are often well outside the city.
+  maxDistanceKm: 150,
+  cap: 12,
+  requireCoords: true,
+};
 
 /**
- * Checks every distinct named restaurant across the options. Returns, per
- * option, the checks for the restaurants it names, plus one status.
- * Never throws: this is an optional enrichment and must never cost the
- * traveller their itinerary. Anything unexpected reports UNAVAILABLE.
+ * The distinct (name, city) pairs a set of options names, in plan order -- the
+ * same name in two cities is two places -- and, per option, which pair each
+ * of its names refers to (first city wins within an option). Shared by the
+ * place and trail checks.
  */
-export async function checkRestaurants(drafts: DraftLike[], destinations: string[], find: Find = reviews.findRestaurant): Promise<Result> {
-  try {
-    return await checkRestaurantsUnsafe(drafts, destinations, find);
-  } catch (err) {
-    console.error("checkRestaurants failed:", err);
-    return { perOption: drafts.map(() => ({})), status: { status: "UNAVAILABLE" } };
-  }
-}
-
-async function checkRestaurantsUnsafe(drafts: DraftLike[], destinations: string[], find: Find): Promise<Result> {
-  // Distinct (name, city) pairs in plan order: the same name in two cities is
-  // two places. Each option records which pair each of its names refers to.
+export function collectNamedPairs(
+  drafts: DraftLike[],
+  destinations: string[],
+  pick: (a: ActivityLike) => string | undefined,
+): { wanted: Map<string, { name: string; city?: string }>; pairsPerOption: Array<Map<string, string>> } {
   const wanted = new Map<string, { name: string; city?: string }>();
   const pairsPerOption = drafts.map((draft) => {
     const cities = resolveDraftCities(draft.days, destinations);
-    const pairs = new Map<string, string>(); // restaurantKey(name) -> pair key; first city wins within an option
+    const pairs = new Map<string, string>(); // restaurantKey(name) -> pair key
     draft.days.forEach((day, d) =>
       day.activities.forEach((a, i) => {
-        const name = a.dining?.restaurantName?.trim();
+        const name = pick(a)?.trim();
         const key = name ? restaurantKey(name) : "";
         if (!name || !key || pairs.has(key)) return;
         const city = cities[d]?.[i] ?? destinations[0];
@@ -190,11 +236,66 @@ async function checkRestaurantsUnsafe(drafts: DraftLike[], destinations: string[
     );
     return pairs;
   });
+  return { wanted, pairsPerOption };
+}
+
+/** Per option: its names mapped to the results found for their pairs (absent = unchecked). */
+export function resultsPerOption<T>(pairsPerOption: Array<Map<string, string>>, results: Map<string, T>): Array<Record<string, T>> {
+  return pairsPerOption.map((pairs) =>
+    Object.fromEntries([...pairs].flatMap(([key, pairKey]) => (results.has(pairKey) ? [[key, results.get(pairKey)!] as const] : []))),
+  );
+}
+
+// One limit on Places calls for the whole process: restaurant and outdoor
+// checks run at the same time and share the same quota.
+type Slots = { free: number; waiters: Array<() => void> };
+const gs = globalThis as unknown as { __tripPlannerPlacesSlots?: Slots };
+async function withPlacesSlot<T>(fn: () => Promise<T>): Promise<T> {
+  const slots = (gs.__tripPlannerPlacesSlots ??= { free: CONCURRENCY, waiters: [] });
+  while (slots.free === 0) await new Promise<void>((r) => slots.waiters.push(r));
+  slots.free--;
+  try {
+    return await fn();
+  } finally {
+    slots.free++;
+    slots.waiters.shift()?.();
+  }
+}
+
+type Find = typeof reviews.findPlace;
+type Result = { perOption: Array<Record<string, RestaurantCheck>>; status: RestaurantLookupStatus };
+
+/**
+ * Checks every distinct named restaurant across the options. Returns, per
+ * option, the checks for the restaurants it names, plus one status.
+ * Never throws: this is an optional enrichment and must never cost the
+ * traveller their itinerary. Anything unexpected reports UNAVAILABLE.
+ */
+export async function checkRestaurants(drafts: DraftLike[], destinations: string[], find: Find = reviews.findPlace): Promise<Result> {
+  return checkPlaces(drafts, destinations, RESTAURANT_SPEC, find);
+}
+
+/** The same checks for the trailheads, parks and beaches outdoor stops name. */
+export async function checkOutdoorPlaces(drafts: DraftLike[], destinations: string[], find: Find = reviews.findPlace): Promise<Result> {
+  return checkPlaces(drafts, destinations, OUTDOOR_SPEC, find);
+}
+
+async function checkPlaces(drafts: DraftLike[], destinations: string[], spec: PlaceCheckSpec, find: Find): Promise<Result> {
+  try {
+    return await checkPlacesUnsafe(drafts, destinations, spec, find);
+  } catch (err) {
+    console.error("place checks failed:", err);
+    return { perOption: drafts.map(() => ({})), status: { status: "UNAVAILABLE" } };
+  }
+}
+
+async function checkPlacesUnsafe(drafts: DraftLike[], destinations: string[], spec: PlaceCheckSpec, find: Find): Promise<Result> {
+  const { wanted, pairsPerOption } = collectNamedPairs(drafts, destinations, spec.pick);
 
   const empty = drafts.map(() => ({}));
   if (wanted.size === 0) return { perOption: empty, status: { status: "NO_CANDIDATES" } };
 
-  const todo = [...wanted].slice(0, MAX_RESTAURANT_CHECKS_PER_GENERATION);
+  const todo = [...wanted].slice(0, spec.cap);
   let coords = new Map<string, Coords | undefined>();
   try {
     const cities = [...new Set(todo.flatMap(([, w]) => (w.city ? [w.city] : [])))];
@@ -209,21 +310,24 @@ async function checkRestaurantsUnsafe(drafts: DraftLike[], destinations: string[
 
   const call = async (name: string, city: string | undefined, near: Coords | undefined) => {
     const params = { name, city: city ? placeLabel(city) : undefined, near };
-    let res: ProviderResult<RestaurantPlace[]> = await find(params);
+    let res: ProviderResult<RestaurantPlace[]> = await withPlacesSlot(() => find(params));
     // One retry for a rate limit, if Google asks for a short wait.
     if (!res.ok && res.reason === "RATE_LIMITED" && res.retryAfterMs <= MAX_RETRY_WAIT_MS) {
       const wait = res.retryAfterMs;
       await new Promise((r) => setTimeout(r, wait));
-      res = await find(params);
+      res = await withPlacesSlot(() => find(params));
     }
     return res;
   };
 
   const checkOne = async ([pairKey, { name, city }]: (typeof todo)[number]): Promise<"NOT_CONFIGURED" | void> => {
     const near = city ? coords.get(city) : undefined;
+    if (spec.requireCoords && city && !near) return; // can't judge location: unchecked
     const res = await call(name, city, near);
     if (res.ok) {
-      const match = res.data.find((p) => nameMatches(name, p.name, city) && (!city || inCity(p, city, near)));
+      const match = res.data.find(
+        (p) => nameMatches(name, p.name, city, spec.generic) && (!city || inCity(p, city, near, spec.maxDistanceKm)),
+      );
       checks.set(pairKey, match ? toCheck(match) : { status: "NOT_FOUND" });
       return;
     }
@@ -250,8 +354,5 @@ async function checkRestaurantsUnsafe(drafts: DraftLike[], destinations: string[
     checks.size === 0 && failures > 0
       ? { status: "UNAVAILABLE" }
       : { status: "OK", named: wanted.size, checked: checks.size, unchecked: wanted.size - checks.size };
-  const perOption = pairsPerOption.map((pairs) =>
-    Object.fromEntries([...pairs].flatMap(([key, pairKey]) => (checks.has(pairKey) ? [[key, checks.get(pairKey)!] as const] : []))),
-  );
-  return { perOption, status };
+  return { perOption: resultsPerOption(pairsPerOption, checks), status };
 }

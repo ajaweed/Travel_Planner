@@ -1,7 +1,9 @@
 import type { PlaceReviewSummary } from "@trip-planner/integrations";
 import { z } from "zod";
 import { DietarySchema, NO_DIETARY } from "../dietary";
+import { NO_OUTDOOR_NEEDS, OutdoorNeedsSchema, normalizeDifficulty } from "../outdoors";
 import type { RestaurantCheck, RestaurantLookupStatus } from "../restaurantChecks";
+import type { TrailCheck } from "../trailChecks";
 
 // --- TripBrief: what the ConciergeAgent extracts from free text ---
 
@@ -38,6 +40,11 @@ export const TripBriefSchema = z.object({
       DietarySchema.default(NO_DIETARY),
     )
     .catch(NO_DIETARY),
+  /**
+   * Fitness and access limits for hikes and nature outings (hardest wanted,
+   * mobility, young kids). Merged in code with landing-page choices.
+   */
+  outdoors: OutdoorNeedsSchema.default(NO_OUTDOOR_NEEDS).catch(NO_OUTDOOR_NEEDS),
   needsFlights: z.boolean().default(true),
   needsHotel: z.boolean().default(true),
   openToRecommendations: z
@@ -107,6 +114,32 @@ export const DiningDraftSchema = z.object({
 });
 export type DiningDraft = z.infer<typeof DiningDraftSchema>;
 
+/** A positive number, accepting "5.5" strings; anything else is dropped (not fatal). */
+const optionalNumber = (max: number) =>
+  z.preprocess((v) => (typeof v === "string" ? Number(v) : v), z.number().positive().max(max).optional()).catch(undefined);
+
+/**
+ * Details for a hike or nature outing. Display and checking only, parsed
+ * leniently: a malformed block is dropped, never the whole itinerary.
+ */
+export const OutdoorDraftSchema = z.object({
+  type: z.enum(["hike", "walk", "nature", "beach", "water", "wildlife", "viewpoint"]).catch("nature"),
+  difficulty: z.unknown().transform((v) => normalizeDifficulty(v)),
+  distanceKm: optionalNumber(200),
+  elevationGainM: optionalNumber(9000),
+  durationHours: optionalNumber(24),
+  /** A real trailhead, park, beach or reserve, findable on Google Maps. */
+  placeName: optionalText(120),
+  /** A named, waymarked route (e.g. "Rota Vicentina - Trilho dos Pescadores"), if it is one. */
+  trailName: optionalText(120),
+  permit: optionalText(300),
+  seasonalNote: optionalText(300),
+  safetyNote: optionalText(300),
+  /** How it fits the traveller's fitness/access needs. */
+  accessNote: optionalText(300),
+});
+export type OutdoorDraft = z.infer<typeof OutdoorDraftSchema>;
+
 export const ActivityDraftSchema = z.object({
   title: z.string(),
   description: z.string().optional(),
@@ -114,6 +147,7 @@ export const ActivityDraftSchema = z.object({
   endTime: z.string().optional(),
   bookable: BookableDraftSchema.optional(),
   dining: DiningDraftSchema.optional().catch(undefined),
+  outdoor: OutdoorDraftSchema.optional().catch(undefined),
 });
 export type ActivityDraft = z.infer<typeof ActivityDraftSchema>;
 
@@ -233,6 +267,11 @@ export type StoredItineraryOption = Omit<ItineraryOptionDraft, "days"> & {
    */
   restaurantChecks?: Record<string, RestaurantCheck>;
   restaurantLookup?: RestaurantLookupStatus;
+  /** Google Places checks of outdoor stops' trailheads/parks/beaches, keyed by restaurantKey(placeName). */
+  outdoorChecks?: Record<string, RestaurantCheck>;
+  outdoorLookup?: RestaurantLookupStatus;
+  /** OpenStreetMap checks of named trails, keyed by restaurantKey(trailName). */
+  trailChecks?: Record<string, TrailCheck>;
 };
 
 // --- Budget ---

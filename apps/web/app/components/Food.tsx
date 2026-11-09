@@ -5,7 +5,7 @@
 //   traveller has dietary needs, we always say to confirm with the restaurant.
 // - A possible conflict found by our keyword check is shown, not hidden.
 
-import { AlertTriangle, BadgeCheck, ExternalLink, Info, Salad, SearchX, Star, UtensilsCrossed } from "lucide-react";
+import { AlertTriangle, BadgeCheck, ExternalLink, Footprints, Info, Salad, SearchX, Star, UtensilsCrossed } from "lucide-react";
 import { CARD_CLASSES } from "./ui";
 
 // Type-only import: erased at build, so no server code reaches the client.
@@ -25,16 +25,35 @@ const MEAL_LABELS: Record<string, string> = {
   drinks: "Drinks",
 };
 
-/** "Planned around: Halal · Allergy: peanuts". Renders nothing without needs. */
-export function DietaryBadges({ labels, className = "" }: { labels?: string[]; className?: string }) {
-  if (!labels?.length) return null;
+/**
+ * "Planned around: [salad] Halal · Allergy: peanuts [footprints] Easy walks
+ * only". Each group of needs carries its own icon. Renders nothing without needs.
+ */
+export function NeedsBadges({
+  dietary,
+  outdoor,
+  className = "",
+}: {
+  dietary?: string[];
+  outdoor?: string[];
+  className?: string;
+}) {
+  const groups: Array<{ Icon: typeof Salad; label: string; items: string[] }> = [
+    { Icon: Salad, label: "Food", items: dietary ?? [] },
+    { Icon: Footprints, label: "Fitness and access", items: outdoor ?? [] },
+  ].filter((g) => g.items.length > 0);
+  if (groups.length === 0) return null;
   return (
     <p className={`flex flex-wrap items-center gap-1.5 text-xs font-medium text-ink-700 ${className}`}>
-      <Salad size={14} strokeWidth={1.75} aria-hidden="true" className="text-lagoon-700" />
       <span>Planned around:</span>
-      {labels.map((l) => (
-        <span key={l} className="rounded-full bg-lagoon-50 px-2 py-0.5 text-lagoon-700">
-          {l}
+      {groups.map(({ Icon, label, items }) => (
+        <span key={label} className="inline-flex flex-wrap items-center gap-1.5">
+          <Icon size={14} strokeWidth={1.75} aria-label={label} className="text-lagoon-700" />
+          {items.map((l) => (
+            <span key={l} className="rounded-full bg-lagoon-50 px-2 py-0.5 text-lagoon-700">
+              {l}
+            </span>
+          ))}
         </span>
       ))}
     </p>
@@ -174,7 +193,7 @@ export function LocalFoodSection({ foods, dietary }: { foods?: LocalFood[]; diet
         <UtensilsCrossed size={20} strokeWidth={1.75} aria-hidden="true" className="text-sunset-600" />
         Local food to try
       </h2>
-      <DietaryBadges labels={dietary} className="mt-2" />
+      <NeedsBadges dietary={dietary} className="mt-2" />
       <ul className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {foods.map((f, i) => (
           <li key={`${f.name}-${i}`} className={`flex flex-col p-4 ${CARD_CLASSES}`}>

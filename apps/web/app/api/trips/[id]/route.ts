@@ -9,7 +9,9 @@ import {
   getAiBookingReadiness,
   getBudgetStatus,
   getUnreadNotifications,
-  planFood,
+  outdoorNeedLabels,
+  outdoorNeedsFromBrief,
+  planExtras,
   reapStalledBookings,
   resolveActivityPlaces,
 } from "@trip-planner/core";
@@ -49,6 +51,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   // Each activity's city (multi-city aware) and stored search params.
   const places = resolveActivityPlaces(trip.itinerary, destinations);
   const dietary = dietaryFromBrief(trip.briefJson);
+  const outdoors = outdoorNeedsFromBrief(trip.briefJson);
 
   // Meals and "local food to try" live in the chosen option's draft (no
   // migration needed); conflicts with the traveller's needs are re-checked on
@@ -60,7 +63,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
           select: { draftJson: true },
         })
       : null;
-  const food = planFood(
+  const food = planExtras(
     trip.itinerary.map((day) => ({
       ...day,
       activities: day.activities.map((a) => {
@@ -69,7 +72,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       }),
     })),
     selected?.draftJson,
-    dietary,
+    { dietary, outdoors },
     (id) => places.get(id)?.city,
     destinations,
   );
@@ -85,6 +88,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       return {
         ...activity,
         dining,
+        // Hike/nature details, checks and fitness/access flags.
+        outdoor: food.outdoor.get(activity.id),
         // Possible conflicts with the traveller's dietary needs, any stop.
         conflicts: food.conflicts.get(activity.id),
         // "See what people say" (Google / Reddit) -- deterministic URLs, never model-written.
@@ -120,6 +125,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     destinations,
     // What the plan was made to respect, and the local dishes to try.
     food: { dietary: dietaryLabels(dietary), localFoods: food.localFoods },
+    // What outdoor stops were planned around ("Easy walks only", "Young kids").
+    outdoorNeeds: outdoorNeedLabels(outdoors),
     aiBooking: getAiBookingReadiness(),
     budget,
     unreadCount: unread.length,

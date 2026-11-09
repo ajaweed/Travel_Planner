@@ -20,6 +20,7 @@ import {
 import { ContourPattern } from "./components/ContourPattern";
 import { DestinationIdeas } from "./components/DestinationIdeas";
 import { DietaryPicker, NO_DIETARY_CHOICE, parseAllergies, type DietaryChoice } from "./components/DietaryPicker";
+import { FitnessPicker, NO_FITNESS_CHOICE, type FitnessChoice } from "./components/FitnessPicker";
 import { Alert, CHIP_CLASSES, buttonClasses } from "./components/ui";
 
 // "Surprise me" first on purpose: it's the "I don't know what I want" path.
@@ -53,6 +54,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [dietary, setDietary] = useState<DietaryChoice>(NO_DIETARY_CHOICE);
   const [allergiesText, setAllergiesText] = useState("");
+  const [fitness, setFitness] = useState<FitnessChoice>(NO_FITNESS_CHOICE);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -66,6 +68,7 @@ export default function HomePage() {
         body: JSON.stringify({
           prompt,
           dietary: { requirements: dietary.requirements, allergies: parseAllergies(allergiesText) },
+          outdoors: { maxDifficulty: fitness.maxDifficulty, access: fitness.access },
         }),
       });
       if (!res.ok) {
@@ -141,6 +144,7 @@ export default function HomePage() {
               onAllergiesTextChange={setAllergiesText}
               disabled={submitting}
             />
+            <FitnessPicker value={fitness} onChange={setFitness} disabled={submitting} />
             <div className="flex flex-col gap-3 border-t border-sand-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="flex items-center gap-1.5 text-sm text-ink-500">
                 <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />

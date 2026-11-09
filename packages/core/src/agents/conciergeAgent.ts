@@ -10,7 +10,7 @@ import { rollBriefForward, todayISO } from "./tripDates";
 import { ConciergeResultSchema, type ConciergeResult, type TripBrief } from "./types";
 
 // Fields Claude has been seen to double-encode as JSON strings (repaired before validation).
-const ARRAY_FIELDS = ["destinations", "interests", "mustInclude", "mustAvoid", "dietary"];
+const ARRAY_FIELDS = ["destinations", "interests", "mustInclude", "mustAvoid", "dietary", "outdoors"];
 
 const tools: Tool[] = [
   {
@@ -52,6 +52,23 @@ const tools: Tool[] = [
               description: "Allergens in plain words, e.g. \"peanuts\", \"tree nuts\", \"shellfish\", \"sesame\".",
             },
             notes: { type: "string", description: "Any other food need in the traveller's words (e.g. 'no spicy food')." },
+          },
+        },
+        outdoors: {
+          type: "object",
+          description:
+            "Fitness and access limits the traveller states for walks, hikes and nature outings. Empty when none are mentioned -- never guess from age or anything else.",
+          properties: {
+            maxDifficulty: {
+              type: "string",
+              enum: ["easy", "moderate", "hard"],
+              description: "The hardest outing they want: 'easy' for gentle walks only, 'hard' if they want challenging hikes.",
+            },
+            access: {
+              type: "array",
+              items: { type: "string", enum: ["limited_mobility", "young_kids", "wheelchair"] },
+            },
+            notes: { type: "string", description: "Any other fitness/access need in their words (e.g. 'afraid of heights')." },
           },
         },
         needsFlights: { type: "boolean" },
@@ -100,6 +117,8 @@ Rules:
   planning: no usable destination at all, no usable budget, no usable date/duration window,
   or (when needsFlights) no origin city. Everything else gets a reasonable default.
 - Budget must become an integer number of minor currency units (cents). "$1500" -> 150000.
+- Record fitness/access needs for outdoor activities exactly as stated ("nothing too
+  strenuous", "bad knees", "with a toddler", "love challenging hikes"). Never ask about them.
 - Record dietary needs exactly as stated (halal, kosher, vegetarian, allergies...). Never
   ask about them and never infer them from anything else; a missing dietary need is not a
   reason for a clarifying question.

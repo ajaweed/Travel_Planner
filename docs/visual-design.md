@@ -896,7 +896,7 @@ Give each row `id="activity-{id}"` so notifications can link to it.
   badge) under the prompt: checkbox chips for Halal, Kosher, Vegetarian, Vegan, Gluten-free,
   Dairy-free, No pork and No alcohol, plus a comma-separated allergies field. These are
   merged into the brief in code (`mergeDietary`), never left to the model to extract.
-- **"Planned around: Halal · Allergy: peanuts"** badges (`DietaryBadges`) under the trip
+- **"Planned around: Halal · Allergy: peanuts"** badges (`NeedsBadges`, one icon per group of needs) under the trip
   title, above the options, and on the local-food section.
 - **Options cards:** "N meals planned, incl. <restaurants>", the first local dishes, and a
   named list of anything flagged ("May not suit your diet: <stop> (Halal: wine)"), so the
@@ -918,6 +918,27 @@ Give each row `id="activity-{id}"` so notifications can link to it.
   The keyword conflict check (`core/src/dietary.ts`) errs towards flagging and is never
   hidden. It ignores direct negations ("pork-free", "without nuts") and advice to check
   ("ask about pork content"), but not idioms that recommend ("…without a bifana").
+
+### 4.11 Hikes, nature and fitness/access needs (added 2026-11-08)
+- **Landing:** "Fitness or access needs?" (collapsed, with a count) next to the dietary picker:
+  a radio group for the hardest outing (Easy walks only / Moderate hikes OK / Up for hard
+  hikes; click again to clear), plus checkboxes for Limited mobility, Young kids and
+  Wheelchair access. Merged into the brief in code, keeping the stricter limit.
+- **Badges:** fitness/access labels join the dietary ones in "Planned around: …".
+- **Outdoor stops:** the icon by type (Mountain / Trees / Waves). The details line shows a
+  difficulty pill (easy success, moderate warning, hard danger), distance, climb and time,
+  the named place and links (Google Maps, to the verified place where found; Trail map). Then
+  the Google check line, "Trail on OpenStreetMap: <route> · N km mapped", a trail-length note
+  when the plan's distance differs a lot from a short mapped trail, Permit / Season / Safety /
+  Access notes, and flags.
+- **Flags** (warning-700, from `core/src/outdoors.ts`): over the traveller's limit; a
+  difficulty the distance and climbing contradict ("Called easy, but 12 km with 900 m of
+  climbing is more like hard."); access (step-free unconfirmed, limited mobility, young kids).
+- **Option cards:** "N outdoor outings: 3 easy, 1 moderate" and "Check before choosing:" with
+  each flagged outing named.
+- **Honesty:** a trail not found on OpenStreetMap is not a warning (most walks aren't
+  waymarked routes). A standing caveat appears wherever outings are suggested: "Trail details
+  are AI-suggested: check conditions, closures and permits locally…".
 
 ## 7. Out of scope for this pass
 - Dark mode. Tokens are named by role so a dark set can be added later.
