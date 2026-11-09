@@ -896,7 +896,7 @@ Give each row `id="activity-{id}"` so notifications can link to it.
   badge) under the prompt: checkbox chips for Halal, Kosher, Vegetarian, Vegan, Gluten-free,
   Dairy-free, No pork and No alcohol, plus a comma-separated allergies field. These are
   merged into the brief in code (`mergeDietary`), never left to the model to extract.
-- **"Planned around: Halal · Allergy: peanuts"** badges (`DietaryBadges`) under the trip
+- **"Planned around: Halal · Allergy: peanuts"** badges (`NeedsBadges`, one icon per group of needs) under the trip
   title, above the options, and on the local-food section.
 - **Options cards:** "N meals planned, incl. <restaurants>", the first local dishes, and a
   named list of anything flagged ("May not suit your diet: <stop> (Halal: wine)"), so the

@@ -147,14 +147,14 @@ function toCheck(place: RestaurantPlace): RestaurantCheck {
   };
 }
 
-type DraftLike = {
+export type DraftLike = {
   days: Array<{
     activities: Array<{
       title: string;
       description?: string | null;
       bookable?: { kind: string; candidateName?: string; searchHint?: string } | null;
       dining?: { restaurantName?: string } | null;
-      outdoor?: { placeName?: string } | null;
+      outdoor?: { placeName?: string; trailName?: string } | null;
     }>;
   }>;
 };
@@ -170,6 +170,12 @@ export type PlaceCheckSpec = {
   maxDistanceKm: number;
   /** Most distinct (name, city) pairs checked per generation. */
   cap: number;
+  /**
+   * Without the city's coordinates, leave the name unchecked rather than fall
+   * back to "does the address name the city": day-trip parks and beaches are
+   * outside the city, so that fallback would call real places "not found".
+   */
+  requireCoords?: boolean;
 };
 
 export const RESTAURANT_SPEC: PlaceCheckSpec = {
@@ -199,7 +205,62 @@ export const OUTDOOR_SPEC: PlaceCheckSpec = {
   // Day trips: national parks and coastlines are often well outside the city.
   maxDistanceKm: 150,
   cap: 12,
+  requireCoords: true,
 };
+
+/**
+ * The distinct (name, city) pairs a set of options names, in plan order -- the
+ * same name in two cities is two places -- and, per option, which pair each
+ * of its names refers to (first city wins within an option). Shared by the
+ * place and trail checks.
+ */
+export function collectNamedPairs(
+  drafts: DraftLike[],
+  destinations: string[],
+  pick: (a: ActivityLike) => string | undefined,
+): { wanted: Map<string, { name: string; city?: string }>; pairsPerOption: Array<Map<string, string>> } {
+  const wanted = new Map<string, { name: string; city?: string }>();
+  const pairsPerOption = drafts.map((draft) => {
+    const cities = resolveDraftCities(draft.days, destinations);
+    const pairs = new Map<string, string>(); // restaurantKey(name) -> pair key
+    draft.days.forEach((day, d) =>
+      day.activities.forEach((a, i) => {
+        const name = pick(a)?.trim();
+        const key = name ? restaurantKey(name) : "";
+        if (!name || !key || pairs.has(key)) return;
+        const city = cities[d]?.[i] ?? destinations[0];
+        const pairKey = `${key}|${city ? restaurantKey(city) : ""}`;
+        pairs.set(key, pairKey);
+        if (!wanted.has(pairKey)) wanted.set(pairKey, { name, city });
+      }),
+    );
+    return pairs;
+  });
+  return { wanted, pairsPerOption };
+}
+
+/** Per option: its names mapped to the results found for their pairs (absent = unchecked). */
+export function resultsPerOption<T>(pairsPerOption: Array<Map<string, string>>, results: Map<string, T>): Array<Record<string, T>> {
+  return pairsPerOption.map((pairs) =>
+    Object.fromEntries([...pairs].flatMap(([key, pairKey]) => (results.has(pairKey) ? [[key, results.get(pairKey)!] as const] : []))),
+  );
+}
+
+// One limit on Places calls for the whole process: restaurant and outdoor
+// checks run at the same time and share the same quota.
+type Slots = { free: number; waiters: Array<() => void> };
+const gs = globalThis as unknown as { __tripPlannerPlacesSlots?: Slots };
+async function withPlacesSlot<T>(fn: () => Promise<T>): Promise<T> {
+  const slots = (gs.__tripPlannerPlacesSlots ??= { free: CONCURRENCY, waiters: [] });
+  while (slots.free === 0) await new Promise<void>((r) => slots.waiters.push(r));
+  slots.free--;
+  try {
+    return await fn();
+  } finally {
+    slots.free++;
+    slots.waiters.shift()?.();
+  }
+}
 
 type Find = typeof reviews.findPlace;
 type Result = { perOption: Array<Record<string, RestaurantCheck>>; status: RestaurantLookupStatus };
@@ -229,25 +290,7 @@ async function checkPlaces(drafts: DraftLike[], destinations: string[], spec: Pl
 }
 
 async function checkPlacesUnsafe(drafts: DraftLike[], destinations: string[], spec: PlaceCheckSpec, find: Find): Promise<Result> {
-  // Distinct (name, city) pairs in plan order: the same name in two cities is
-  // two places. Each option records which pair each of its names refers to.
-  const wanted = new Map<string, { name: string; city?: string }>();
-  const pairsPerOption = drafts.map((draft) => {
-    const cities = resolveDraftCities(draft.days, destinations);
-    const pairs = new Map<string, string>(); // restaurantKey(name) -> pair key; first city wins within an option
-    draft.days.forEach((day, d) =>
-      day.activities.forEach((a, i) => {
-        const name = spec.pick(a)?.trim();
-        const key = name ? restaurantKey(name) : "";
-        if (!name || !key || pairs.has(key)) return;
-        const city = cities[d]?.[i] ?? destinations[0];
-        const pairKey = `${key}|${city ? restaurantKey(city) : ""}`;
-        pairs.set(key, pairKey);
-        if (!wanted.has(pairKey)) wanted.set(pairKey, { name, city });
-      }),
-    );
-    return pairs;
-  });
+  const { wanted, pairsPerOption } = collectNamedPairs(drafts, destinations, spec.pick);
 
   const empty = drafts.map(() => ({}));
   if (wanted.size === 0) return { perOption: empty, status: { status: "NO_CANDIDATES" } };
@@ -267,18 +310,19 @@ async function checkPlacesUnsafe(drafts: DraftLike[], destinations: string[], sp
 
   const call = async (name: string, city: string | undefined, near: Coords | undefined) => {
     const params = { name, city: city ? placeLabel(city) : undefined, near };
-    let res: ProviderResult<RestaurantPlace[]> = await find(params);
+    let res: ProviderResult<RestaurantPlace[]> = await withPlacesSlot(() => find(params));
     // One retry for a rate limit, if Google asks for a short wait.
     if (!res.ok && res.reason === "RATE_LIMITED" && res.retryAfterMs <= MAX_RETRY_WAIT_MS) {
       const wait = res.retryAfterMs;
       await new Promise((r) => setTimeout(r, wait));
-      res = await find(params);
+      res = await withPlacesSlot(() => find(params));
     }
     return res;
   };
 
   const checkOne = async ([pairKey, { name, city }]: (typeof todo)[number]): Promise<"NOT_CONFIGURED" | void> => {
     const near = city ? coords.get(city) : undefined;
+    if (spec.requireCoords && city && !near) return; // can't judge location: unchecked
     const res = await call(name, city, near);
     if (res.ok) {
       const match = res.data.find(
@@ -310,8 +354,5 @@ async function checkPlacesUnsafe(drafts: DraftLike[], destinations: string[], sp
     checks.size === 0 && failures > 0
       ? { status: "UNAVAILABLE" }
       : { status: "OK", named: wanted.size, checked: checks.size, unchecked: wanted.size - checks.size };
-  const perOption = pairsPerOption.map((pairs) =>
-    Object.fromEntries([...pairs].flatMap(([key, pairKey]) => (checks.has(pairKey) ? [[key, checks.get(pairKey)!] as const] : []))),
-  );
-  return { perOption, status };
+  return { perOption: resultsPerOption(pairsPerOption, checks), status };
 }

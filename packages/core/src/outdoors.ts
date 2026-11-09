@@ -14,10 +14,19 @@ import { ACCESS_LABELS, ACCESS_TAGS, DIFFICULTIES, type AccessTag, type Difficul
 
 export { ACCESS_LABELS, ACCESS_TAGS, DIFFICULTIES, type AccessTag, type Difficulty };
 
+/**
+ * Loose wording -> a difficulty. "Nothing too strenuous" / "not too difficult"
+ * mean *moderate at most*, not hard: as a traveller's limit, reading them as
+ * "hard" would switch every over-limit warning off. Ranges take the higher
+ * end ("easy to moderate" -> moderate), which is the safer reading for both
+ * a limit-check and an outing's badge.
+ */
 export function normalizeDifficulty(raw: unknown): Difficulty | undefined {
   if (typeof raw !== "string") return undefined;
   const t = raw.toLowerCase();
-  if (/\b(hard|challenging|difficult|strenuous|demanding|expert)\b/.test(t)) return "hard";
+  const HARD = "(hard|challenging|difficult|strenuous|demanding|expert)";
+  if (new RegExp(`\\b(not|nothing|no|never)\\b(\\s+\\w+){0,2}\\s+${HARD}\\b`).test(t)) return "moderate";
+  if (new RegExp(`\\b${HARD}\\b`).test(t)) return "hard";
   if (/\b(moderate|medium|intermediate)\b/.test(t)) return "moderate";
   if (/\b(easy|gentle|light|leisurely|flat)\b/.test(t)) return "easy";
   return undefined;
@@ -52,7 +61,9 @@ export const NO_OUTDOOR_NEEDS: OutdoorNeeds = { maxDifficulty: undefined, access
 /** The stricter of two: lower max difficulty, union of access needs. */
 export function mergeOutdoorNeeds(a: Partial<OutdoorNeeds> | null | undefined, b: Partial<OutdoorNeeds> | null | undefined): OutdoorNeeds {
   const levels = [a?.maxDifficulty, b?.maxDifficulty].filter((x): x is Difficulty => !!x);
-  const notes = [a?.notes, b?.notes].map((n) => n?.trim()).filter((n): n is string => !!n);
+  // Split earlier merges back into parts, so a note restated in a later
+  // clarification round isn't appended again each time.
+  const notes = [a?.notes, b?.notes].flatMap((n) => (n ? n.split(";") : [])).map((n) => n.trim()).filter((n) => !!n);
   return OutdoorNeedsSchema.parse({
     maxDifficulty: levels.length ? levels.sort((x, y) => rank(x) - rank(y))[0] : undefined,
     access: [...(a?.access ?? []), ...(b?.access ?? [])],

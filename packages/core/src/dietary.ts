@@ -78,7 +78,9 @@ export function hasDietaryNeeds(d: Dietary | undefined | null): boolean {
 
 /** Union of two sets of needs. Used to merge what the traveller ticked with what they wrote. */
 export function mergeDietary(a: Partial<Dietary> | undefined | null, b: Partial<Dietary> | undefined | null): Dietary {
-  const notes = [a?.notes, b?.notes].map((n) => n?.trim()).filter((n): n is string => !!n);
+  // Split earlier merges back into parts, so a note restated in a later
+  // clarification round isn't appended again each time.
+  const notes = [a?.notes, b?.notes].flatMap((n) => (n ? n.split(";") : [])).map((n) => n.trim()).filter((n) => !!n);
   return DietarySchema.parse({
     requirements: [...(a?.requirements ?? []), ...(b?.requirements ?? [])],
     allergies: [...(a?.allergies ?? []), ...(b?.allergies ?? [])],

@@ -8,13 +8,21 @@
 // on the model's output.
 
 import { trails as trailsApi } from "@trip-planner/integrations";
-import { resolveDraftCities } from "./activityPlaces";
 import { type Coords, distanceKm, getPlaceResults } from "./destinationPhoto";
-import { OUTDOOR_SPEC, nameMatches, restaurantKey } from "./restaurantChecks";
+import {
+  OUTDOOR_SPEC,
+  collectNamedPairs,
+  nameMatches,
+  restaurantKey,
+  resultsPerOption,
+  type DraftLike,
+} from "./restaurantChecks";
 import { tokens } from "./stopPhotos";
 import { ttlCache } from "./ttlCache";
 
 export const MAX_TRAIL_CHECKS_PER_GENERATION = 8;
+/** All trail lookups in one generation together; the rest stay unchecked. */
+export const TRAIL_CHECKS_DEADLINE_MS = 20_000;
 const DETAILS_PER_TRAIL = 2;
 
 export type TrailCheck =
@@ -23,18 +31,6 @@ export type TrailCheck =
   | { status: "NOT_FOUND" };
 
 type Api = Pick<typeof trailsApi, "searchTrails" | "trailDetails">;
-
-type DraftLike = {
-  days: Array<{
-    activities: Array<{
-      title: string;
-      description?: string | null;
-      bookable?: { kind: string; candidateName?: string; searchHint?: string } | null;
-      dining?: { restaurantName?: string } | null;
-      outdoor?: { trailName?: string } | null;
-    }>;
-  }>;
-};
 
 // Sections that aren't the route itself.
 const SIDE_ROUTE = /\b(alternativ\w*|variant\w*|link|ligacao|spur|connector|desvio)\b/;
@@ -92,44 +88,36 @@ export async function checkTrails(
   now: number = Date.now(),
 ): Promise<Array<Record<string, TrailCheck>>> {
   try {
-    const wanted = new Map<string, { name: string; city: string }>();
-    const pairsPerOption = drafts.map((draft) => {
-      const cities = resolveDraftCities(draft.days, destinations);
-      const pairs = new Map<string, string>();
-      draft.days.forEach((day, d) =>
-        day.activities.forEach((a, i) => {
-          const name = a.outdoor?.trailName?.trim();
-          const city = cities[d]?.[i] ?? destinations[0];
-          const key = name ? restaurantKey(name) : "";
-          if (!name || !key || !city || pairs.has(key)) return;
-          const pairKey = `${key}|${restaurantKey(city)}`;
-          pairs.set(key, pairKey);
-          if (!wanted.has(pairKey)) wanted.set(pairKey, { name, city });
-        }),
-      );
-      return pairs;
-    });
+    const { wanted, pairsPerOption } = collectNamedPairs(drafts, destinations, (a) => a.outdoor?.trailName);
     if (wanted.size === 0) return drafts.map(() => ({}));
 
-    const todo = [...wanted].slice(0, MAX_TRAIL_CHECKS_PER_GENERATION);
-    const places = await getPlaceResults([...new Set(todo.map(([, w]) => w.city))]);
     const results = new Map<string, TrailCheck>();
-    for (const [pairKey, { name, city }] of todo) {
+    // Cache first: a fully cached run makes no calls at all (not even for city coordinates).
+    const misses: Array<[string, { name: string; city: string }]> = [];
+    for (const [pairKey, w] of [...wanted].slice(0, MAX_TRAIL_CHECKS_PER_GENERATION)) {
+      if (!w.city) continue;
       const hit = cache.get(pairKey, now);
-      if (hit) {
-        results.set(pairKey, hit);
-        continue;
-      }
-      const coords = places.get(city)?.coords;
-      if (!coords) continue; // can't check location: leave unchecked
-      const check = await checkOne(name, coords, city, api);
-      if (!check) continue;
-      cache.set(pairKey, check, check.status === "FOUND" ? 7 * 86_400_000 : 86_400_000, now);
-      results.set(pairKey, check);
+      if (hit) results.set(pairKey, hit);
+      else misses.push([pairKey, { name: w.name, city: w.city }]);
     }
-    return pairsPerOption.map((pairs) =>
-      Object.fromEntries([...pairs].flatMap(([key, pairKey]) => (results.has(pairKey) ? [[key, results.get(pairKey)!] as const] : []))),
-    );
+
+    if (misses.length > 0) {
+      const places = await getPlaceResults([...new Set(misses.map(([, w]) => w.city))]);
+      const deadline = Date.now() + TRAIL_CHECKS_DEADLINE_MS;
+      for (const [pairKey, { name, city }] of misses) {
+        // Never hold up the itinerary: stop at the deadline.
+        if (Date.now() > deadline) break;
+        const coords = places.get(city)?.coords;
+        if (!coords) continue; // can't check location: leave unchecked
+        const check = await checkOne(name, coords, city, api);
+        // A provider problem (down, slow, rate-limiting) will likely repeat:
+        // stop here instead of waiting out every remaining lookup.
+        if (!check) break;
+        cache.set(pairKey, check, check.status === "FOUND" ? 7 * 86_400_000 : 86_400_000, now);
+        results.set(pairKey, check);
+      }
+    }
+    return resultsPerOption(pairsPerOption, results);
   } catch (err) {
     console.error("checkTrails failed:", err);
     return drafts.map(() => ({}));

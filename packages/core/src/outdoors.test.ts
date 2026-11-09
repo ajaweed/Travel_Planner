@@ -21,7 +21,11 @@ const needs = (v: unknown): OutdoorNeeds => OutdoorNeedsSchema.parse(v);
 
 describe("needs", () => {
   it("normalises loose wording", () => {
-    expect(normalizeDifficulty("nothing too strenuous")).toBe("hard"); // the word is about hard; the model sets maxDifficulty itself
+    // Review fix: a negated "hard" word is a limit, not a request for hard hikes.
+    expect(normalizeDifficulty("nothing too strenuous")).toBe("moderate");
+    expect(normalizeDifficulty("not too difficult")).toBe("moderate");
+    expect(normalizeDifficulty("easy to moderate")).toBe("moderate");
+    expect(normalizeDifficulty("Challenging")).toBe("hard");
     expect(normalizeDifficulty("Easy")).toBe("easy");
     expect(normalizeDifficulty("intermediate")).toBe("moderate");
     expect(normalizeAccessTags("bad knees, travelling with a toddler")).toEqual(["limited_mobility", "young_kids"]);
@@ -45,6 +49,12 @@ describe("needs", () => {
     expect(m.maxDifficulty).toBe("easy");
     expect(m.access).toEqual(["young_kids"]);
     expect(mergeOutdoorNeeds(undefined, null)).toEqual({ maxDifficulty: undefined, access: [], notes: undefined });
+  });
+
+  it("notes don't pile up across clarification rounds (review fix)", () => {
+    const round1 = mergeOutdoorNeeds(needs({ notes: "afraid of heights" }), needs({ notes: "bad knees" }));
+    const round2 = mergeOutdoorNeeds(needs({ notes: "afraid of heights" }), round1);
+    expect(round2.notes).toBe("afraid of heights; bad knees");
   });
 
   it("labels skip 'anything goes'", () => {
@@ -198,5 +208,80 @@ describe("checkTrails", () => {
     const boom = { searchTrails: async () => { throw new Error("x"); }, trailDetails: async () => { throw new Error("x"); } };
     resetTrailCache();
     expect(await checkTrails([draft("Trilho dos Pescadores")], ["Lisbon"], boom as never)).toEqual([{}]);
+  });
+});
+
+describe("review fixes: outdoor/trail checks", () => {
+  afterEach(() => setWikimediaFetch(null));
+
+  it("outdoor places aren't called 'not found' when the city's coordinates are unknown", async () => {
+    resetDestinationPhotoCache();
+    setWikimediaFetch(async () => ({ ok: false, status: 500, json: async () => ({}) }));
+    const { checkOutdoorPlaces } = await import("./restaurantChecks");
+    const find = vi.fn(async () => ({
+      ok: true as const,
+      data: [{ placeId: "p", name: "Parque Natural da Arrábida", formattedAddress: "Setúbal, Portugal", types: [] }],
+    }));
+    const r = await checkOutdoorPlaces(
+      [{ days: [{ activities: [{ title: "Walk", outdoor: { placeName: "Parque Natural da Arrábida" } }] }] }],
+      ["Lisbon"],
+      find,
+    );
+    expect(r.perOption[0]).toEqual({});
+    expect(find).not.toHaveBeenCalled();
+  });
+
+  it("restaurant and outdoor checks share one Places concurrency limit", async () => {
+    resetDestinationPhotoCache();
+    setWikimediaFetch(async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        new URL(url).searchParams.get("prop")?.includes("coordinates")
+          ? { query: { pages: [{ title: "Lisbon", coordinates: [{ lat: 38.72, lon: -9.14 }] }] } }
+          : { query: { pages: [] } },
+    }));
+    const { checkOutdoorPlaces, checkRestaurants } = await import("./restaurantChecks");
+    let inFlight = 0;
+    let max = 0;
+    const find = async () => {
+      inFlight++;
+      max = Math.max(max, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return { ok: false as const, reason: "NO_AVAILABILITY" as const };
+    };
+    const names = Array.from({ length: 8 }, (_, i) => `Place${i} Spot`);
+    const draft = { days: [{ activities: names.map((n) => ({ title: n, dining: { restaurantName: n }, outdoor: { placeName: n } })) }] };
+    await Promise.all([checkRestaurants([draft], ["Lisbon"], find), checkOutdoorPlaces([draft], ["Lisbon"], find)]);
+    expect(max).toBeLessThanOrEqual(4);
+  });
+
+  it("trails: a cached run makes no calls at all, and a provider error stops further lookups", async () => {
+    resetTrailCache();
+    resetDestinationPhotoCache();
+    let wikiCalls = 0;
+    setWikimediaFetch(async (url) => {
+      wikiCalls++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () =>
+          new URL(url).searchParams.get("prop")?.includes("coordinates")
+            ? { query: { pages: [{ title: "Lisbon", coordinates: [{ lat: 38.72, lon: -9.14 }] }] } }
+            : { query: { pages: [] } },
+      };
+    });
+    const draft = (...names: string[]) => ({ days: [{ activities: names.map((n) => ({ title: n, outdoor: { trailName: n } })) }] });
+    const failing = { searchTrails: vi.fn(async () => ({ ok: false as const, reason: "PROVIDER_ERROR" as const, message: "503", retryable: true })), trailDetails: vi.fn() };
+    await checkTrails([draft("Trilho Alpha", "Trilho Beta", "Trilho Gamma")], ["Lisbon"], failing as never);
+    expect(failing.searchTrails).toHaveBeenCalledTimes(1);
+
+    const none = { searchTrails: vi.fn(async () => ({ ok: false as const, reason: "NO_AVAILABILITY" as const })), trailDetails: vi.fn() };
+    await checkTrails([draft("Trilho Alpha")], ["Lisbon"], none);
+    const before = wikiCalls;
+    await checkTrails([draft("Trilho Alpha")], ["Lisbon"], none);
+    expect(none.searchTrails).toHaveBeenCalledTimes(1);
+    expect(wikiCalls).toBe(before);
   });
 });

@@ -269,6 +269,7 @@ export type StoredItineraryOption = Omit<ItineraryOptionDraft, "days"> & {
   restaurantLookup?: RestaurantLookupStatus;
   /** Google Places checks of outdoor stops' trailheads/parks/beaches, keyed by restaurantKey(placeName). */
   outdoorChecks?: Record<string, RestaurantCheck>;
+  outdoorLookup?: RestaurantLookupStatus;
   /** OpenStreetMap checks of named trails, keyed by restaurantKey(trailName). */
   trailChecks?: Record<string, TrailCheck>;
 };

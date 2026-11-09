@@ -25,7 +25,7 @@ import { Notifications } from "../../components/Notifications";
 import { StatusPill } from "../../components/StatusPill";
 import { TripPhotoBanner } from "../../components/TripPhotoBanner";
 import type { Photo } from "../../components/DestinationPhoto";
-import { DietaryBadges, LocalFoodSection } from "../../components/Food";
+import { LocalFoodSection, NeedsBadges } from "../../components/Food";
 import { OutdoorCaveat } from "../../components/Outdoor";
 import { Alert, buttonClasses, CARD_CLASSES, INPUT_CLASSES } from "../../components/ui";
 
@@ -328,7 +328,7 @@ export default function TripPage({ params }: { params: { id: string } }) {
               )}
             </div>
           )}
-          <DietaryBadges labels={[...(data.food?.dietary ?? []), ...(data.outdoorNeeds ?? [])]} className="mt-3" />
+          <NeedsBadges dietary={data.food?.dietary} outdoor={data.outdoorNeeds} className="mt-3" />
           <TripPhotoBanner destinations={Array.isArray(data.destinations) ? data.destinations : []} />
         </div>
       </div>

@@ -24,7 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { BookingMode } from "@trip-planner/db";
-import { DietaryBadges, DietaryCaveat, type DietConflict, type Dining, type LocalFood } from "./Food";
+import { DietaryCaveat, NeedsBadges, type DietConflict, type Dining, type LocalFood } from "./Food";
 import type { RestaurantLookupStatus } from "@trip-planner/core";
 import { OutdoorCaveat, type Outdoor } from "./Outdoor";
 import { ResearchLinks } from "./ResearchLinks";
@@ -90,6 +90,7 @@ export type ItineraryOption = {
     variant?: string;
     localFoods?: LocalFood[];
     restaurantLookup?: RestaurantLookupStatus;
+    outdoorLookup?: RestaurantLookupStatus;
   };
 };
 
@@ -189,19 +190,23 @@ function RatingBadge({ review }: { review?: AttachedReview }) {
   );
 }
 
-/** Why some (or all) restaurants show no Google check. Silent when there's nothing to explain. */
-function RestaurantNote({ lookup }: { lookup: RestaurantLookupStatus }) {
+/**
+ * Why some (or all) named places show no Google check -- restaurants, or
+ * trailheads/parks. Silent when there's nothing to explain.
+ */
+function PlaceCheckNote({ lookup, noun }: { lookup: RestaurantLookupStatus; noun: string }) {
+  const Noun = noun.charAt(0).toUpperCase() + noun.slice(1);
   if (lookup.status === "NOT_CONFIGURED") {
-    return <p>Restaurants weren&apos;t checked on Google: Google Places isn&apos;t configured.</p>;
+    return <p>{Noun} weren&apos;t checked on Google: Google Places isn&apos;t configured.</p>;
   }
   if (lookup.status === "UNAVAILABLE") {
-    return <p>Restaurants couldn&apos;t be checked on Google just now. That&apos;s on us, not the restaurants.</p>;
+    return <p>{Noun} couldn&apos;t be checked on Google just now. That&apos;s on us, not the places.</p>;
   }
   if (lookup.status === "OK" && lookup.unchecked > 0) {
     return (
       <p>
-        Checked {lookup.checked} of {lookup.named} named restaurants on Google; the rest show no check (lookup limit or a
-        failed lookup).
+        Checked {lookup.checked} of {lookup.named} named {noun} on Google; the rest show no check (lookup limit or a failed
+        lookup).
       </p>
     );
   }
@@ -302,7 +307,7 @@ export function ItineraryOptions({
         <ShieldCheck size={18} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-lagoon-600" />
         Nothing is booked until you choose a plan.
       </p>
-      <DietaryBadges labels={[...(dietary ?? []), ...(outdoorNeeds ?? [])]} className="mt-2" />
+      <NeedsBadges dietary={dietary} outdoor={outdoorNeeds} className="mt-2" />
 
       {modePicker}
 
@@ -563,7 +568,8 @@ export function ItineraryOptions({
               : "Estimated costs, for comparison. Real prices are on the booking sites we link you to."}
           </p>
           {lookup && <ReviewNote lookup={lookup} />}
-          {options[0]?.draft.restaurantLookup && <RestaurantNote lookup={options[0].draft.restaurantLookup} />}
+          {options[0]?.draft.restaurantLookup && <PlaceCheckNote lookup={options[0].draft.restaurantLookup} noun="restaurants" />}
+          {options[0]?.draft.outdoorLookup && <PlaceCheckNote lookup={options[0].draft.outdoorLookup} noun="parks and trailheads" />}
           {summaries.some((f) => f.meals > 0) && <DietaryCaveat labels={dietary} />}
           {outdoorSummaries.some((o) => o.count > 0) && <OutdoorCaveat />}
         </div>

@@ -235,6 +235,7 @@ export async function generateItineraryOptions(tripId: string): Promise<void> {
     restaurantChecks: restaurants.perOption[i],
     restaurantLookup: restaurants.status,
     outdoorChecks: outdoorPlaces.perOption[i],
+    outdoorLookup: outdoorPlaces.status,
     trailChecks: trails[i],
   }));
 
