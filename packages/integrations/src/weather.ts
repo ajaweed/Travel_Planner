@@ -36,7 +36,9 @@ async function daily(base: string, q: WeatherQuery, fields: string[]): Promise<P
   try {
     const res = await fetch(u, { signal: AbortSignal.timeout(TIMEOUT_MS) });
     if (res.status === 429) return { ok: false, reason: "RATE_LIMITED", retryAfterMs: 60_000 };
-    if (res.status === 400) return { ok: false, reason: "NO_AVAILABILITY" }; // e.g. dates out of range
+    // 400 = a request Open-Meteo won't serve (e.g. dates out of range): an
+    // error, not "no weather here", so callers don't remember it as an answer.
+    if (res.status === 400) return { ok: false, reason: "PROVIDER_ERROR", message: "Open-Meteo rejected the request (400)", retryable: false };
     if (!res.ok) return { ok: false, reason: "PROVIDER_ERROR", message: `Open-Meteo ${res.status}`, retryable: res.status >= 500 };
     const body = (await res.json()) as { daily?: unknown; elevation?: unknown };
     const d: any = body?.daily ?? {};

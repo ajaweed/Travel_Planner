@@ -36,8 +36,9 @@ export function WeatherChip({ weather }: { weather?: DayWeather }) {
     weather.kind === "forecast"
       ? "Forecast"
       : `Typical for this date${weather.years ? ` (last ${weather.years} years)` : ""}`;
-  // A region's centre can be a mountain: say so rather than pass it off as the coast.
-  const high = weather.where === "destination" && (weather.elevationM ?? 0) >= HIGH_POINT_M;
+  // High readings say so: a region's centre can be a mountain, and a hike day's
+  // weather is taken up where the hike is.
+  const high = (weather.elevationM ?? 0) >= HIGH_POINT_M;
   return (
     <p
       className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-sand-100 px-2.5 py-1 text-xs text-ink-700 tabular-nums"

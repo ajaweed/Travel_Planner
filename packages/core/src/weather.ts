@@ -93,25 +93,36 @@ export async function weatherForDates(
   try {
     const unique = [...new Set(dates)].sort();
     if (unique.length === 0) return out;
-    const lastForecast = addDays(today, FORECAST_DAYS);
+    // A day's margin under Open-Meteo's 16-day limit: "today" here is UTC,
+    // the place's own date (timezone=auto) can be a day behind.
+    const lastForecast = addDays(today, FORECAST_DAYS - 1);
     const forecastDates = unique.filter((d) => d >= today && d <= lastForecast);
-    const typicalDates = unique.filter((d) => !forecastDates.includes(d));
 
     if (forecastDates.length) {
       const rows = await cached("f", { ...coords, start: forecastDates[0]!, end: forecastDates.at(-1)! }, api, 3 * 3_600_000);
       for (const r of rows ?? []) if (forecastDates.includes(r.date)) out.set(r.date, { ...r, kind: "forecast" });
     }
 
+    // Everything without a forecast -- beyond the window, or the forecast
+    // failed -- gets what's typical for the date instead.
+    const typicalDates = unique.filter((d) => !out.has(d));
     if (typicalDates.length) {
-      const thisYear = Number(today.slice(0, 4));
-      const years = Array.from({ length: TYPICAL_YEARS }, (_, i) => thisYear - 1 - i);
-      const perYear = await Promise.all(
-        years.map((y) =>
-          cached("h", { ...coords, start: inYear(typicalDates[0]!, y), end: inYear(typicalDates.at(-1)!, y) }, api, 7 * 86_400_000),
+      // Shift every date back by the same whole number of years, so a trip
+      // over New Year keeps its order (Dec 28 -> Jan 3 stays a forward range)
+      // and every shifted date is in the past.
+      const shift = (iso: string, k: number) => inYear(iso, Number(iso.slice(0, 4)) - k);
+      // The most recent years whose dates are all safely past (the archive lags ~5 days).
+      const archivedUpTo = addDays(today, -6);
+      let firstOffset = 1;
+      while (shift(typicalDates.at(-1)!, firstOffset) > archivedUpTo) firstOffset++;
+      const offsets = Array.from({ length: TYPICAL_YEARS }, (_, i) => firstOffset + i);
+      const perOffset = await Promise.all(
+        offsets.map((k) =>
+          cached("h", { ...coords, start: shift(typicalDates[0]!, k), end: shift(typicalDates.at(-1)!, k) }, api, 7 * 86_400_000),
         ),
       );
       for (const date of typicalDates) {
-        const samples = perYear.flatMap((rows, i) => rows?.filter((r) => r.date === inYear(date, years[i]!)) ?? []);
+        const samples = perOffset.flatMap((rows, i) => rows?.filter((r) => r.date === shift(date, offsets[i]!)) ?? []);
         if (samples.length === 0) continue;
         const precip = samples.map((s) => s.precipMm).filter((p): p is number => p !== undefined);
         out.set(date, {
@@ -180,11 +191,15 @@ export async function climateSummary(
     for (let d = start; d <= last && dates.length < 21; d = addDays(d, 1)) dates.push(d);
     const places = destinations.slice(0, 3);
     const coords = await getPlaceResults(places);
+    // All destinations at once: this runs before planning starts.
+    const perPlace = await Promise.all(
+      places.map(async (place) => {
+        const c = coords.get(place.trim())?.coords;
+        return { place, days: c ? [...(await weatherForDates(c, dates, today, api)).values()] : [] };
+      }),
+    );
     const lines: string[] = [];
-    for (const place of places) {
-      const c = coords.get(place.trim())?.coords;
-      if (!c) continue;
-      const days = [...(await weatherForDates(c, dates, today, api)).values()];
+    for (const { place, days } of perPlace) {
       if (days.length === 0) continue;
       const high = avg(days.map((d) => d.highC));
       const low = avg(days.map((d) => d.lowC));

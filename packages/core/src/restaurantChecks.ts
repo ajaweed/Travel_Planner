@@ -90,11 +90,17 @@ const GENERIC = new Set(
  *   own -- otherwise any "Da Mario Italian Restaurant" would "verify" it.
  */
 export function nameMatches(requested: string, googleName: string, city?: string, generic: Set<string> = GENERIC): boolean {
+  // "Queimadas, Santana": the part after a comma is often a locality. Try the
+  // whole name first, so "Mercado da Ribeira, Time Out Market" still matches
+  // on the part after the comma.
+  const head = requested.split(",")[0]!.trim();
+  return matchesName(requested, googleName, city, generic) || (!!head && head !== requested.trim() && matchesName(head, googleName, city, generic));
+}
+
+function matchesName(requested: string, googleName: string, city: string | undefined, generic: Set<string>): boolean {
   const cityWords = city ? tokens(city) : [];
   const notCity = (t: string) => !cityWords.some((c) => sameWord(t, c));
-  // "Queimadas, Santana": the part after a comma is a locality, not the name.
-  const head = requested.split(",")[0]!.trim() || requested;
-  const req = tokens(head).filter(notCity);
+  const req = tokens(requested).filter(notCity);
   const got = tokens(googleName).filter(notCity);
   const has = (words: string[], t: string) => words.some((w) => sameWord(t, w));
   const gotDistinctive = got.filter((t) => !generic.has(t));

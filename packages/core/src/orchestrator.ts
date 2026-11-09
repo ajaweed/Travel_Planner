@@ -195,10 +195,13 @@ export async function generateItineraryOptions(tripId: string): Promise<void> {
   // the whole trip.
   // Typical (or forecast) weather for the dates, so outdoor plans suit the
   // season. Optional: capped at a few seconds and never fails planning.
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const climate = await Promise.race([
     climateSummary(brief.destinations, brief.startDate, brief.endDate),
-    new Promise<undefined>((r) => setTimeout(() => r(undefined), CLIMATE_TIMEOUT_MS)),
-  ]);
+    new Promise<undefined>((r) => {
+      timer = setTimeout(() => r(undefined), CLIMATE_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
 
   const settled = await Promise.allSettled(
     ITINERARY_VARIANTS.map((variant) => runItineraryAgent(brief, variant, climate)),

@@ -27,9 +27,12 @@ export type OutdoorView = OutdoorDraft & {
 export function trailLengthNote(planKm: number | undefined, trail: TrailCheck | undefined): string | undefined {
   if (!trail || trail.status !== "FOUND" || !trail.lengthKm || !planKm || trail.lengthKm > 30) return undefined;
   if (Math.abs(planKm - trail.lengthKm) / trail.lengthKm <= 0.5) return undefined;
-  // About twice the mapped length is almost always there and back.
+  // About twice the mapped length is often there and back -- but not always
+  // (a loop walked once), so say so rather than stay quiet.
   const ratio = planKm / trail.lengthKm;
-  if (ratio >= 1.5 && ratio <= 2.5) return undefined;
+  if (ratio >= 1.5 && ratio <= 2.5) {
+    return `OpenStreetMap maps this trail at ${trail.lengthKm} km; the plan's ${planKm} km may include the walk back. Check before you go.`;
+  }
   return `OpenStreetMap maps this trail at ${trail.lengthKm} km; the plan says ${planKm} km. Check which section you'll walk.`;
 }
 

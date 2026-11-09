@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@trip-planner/db";
 import {
+  HIGH_POINT_M,
   centroid,
   cityCoords,
+  distanceKm,
   destinationsFromBrief,
   planExtras,
   resolveActivityPlaces,
@@ -56,31 +58,40 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const dayCity = new Map<string, string>();
   const dayPoint = new Map<string, { point: Point; where: "stops" | "hotel" | "destination" }>();
   const cities = new Set<string>();
+  let previousCity: string | undefined;
   for (const day of trip.itinerary) {
     const counts = new Map<string, number>();
-    const verified: Array<Point | undefined> = [];
+    const verified: Point[] = [];
+    let outdoorPoint: Point | undefined;
     for (const a of day.activities) {
       if (a.booking?.kind === "FLIGHT") continue;
       const c = places.get(a.id)?.city;
       if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
       const meal = extras.dining.get(a.id)?.check;
       const outdoor = extras.outdoor.get(a.id)?.placeCheck;
-      for (const chk of [meal, outdoor]) if (chk && chk.status !== "NOT_FOUND") verified.push(chk.location);
+      for (const chk of [meal, outdoor]) if (chk && chk.status !== "NOT_FOUND" && chk.location) verified.push(chk.location);
+      if (outdoor && outdoor.status !== "NOT_FOUND" && outdoor.location && !outdoorPoint) outdoorPoint = outdoor.location;
     }
-    const city = [...counts].sort((x, y) => y[1] - x[1])[0]?.[0] ?? destinations[0];
+    // A day of only travel (e.g. the flight home from the last city) is spent
+    // where the previous day ended, not in the trip's first destination.
+    const city = [...counts].sort((x, y) => y[1] - x[1])[0]?.[0] ?? previousCity ?? destinations[0];
+    previousCity = city;
     if (city) {
       dayCity.set(day.id, city);
       cities.add(city);
     }
-    const stops = centroid(verified);
-    if (stops) dayPoint.set(day.id, { point: stops, where: "stops" });
-    else if (hotel) dayPoint.set(day.id, { point: hotel, where: "hotel" });
+    const point = dayStopsPoint(verified, outdoorPoint);
+    if (point) dayPoint.set(day.id, { point, where: "stops" });
   }
   const cityPoints = await cityCoords([...cities]);
   for (const day of trip.itinerary) {
+    if (dayPoint.has(day.id)) continue;
     const city = dayCity.get(day.id);
     const c = city ? cityPoints.get(city) : undefined;
-    if (!dayPoint.has(day.id) && c) dayPoint.set(day.id, { point: c, where: "destination" });
+    // The hotel's location comes from the ratings lookup, which takes Google's
+    // first guess unverified: only trust it near the destination.
+    if (hotel && (!c || distanceKm(c, hotel) <= HOTEL_MAX_KM)) dayPoint.set(day.id, { point: hotel, where: "hotel" });
+    else if (c) dayPoint.set(day.id, { point: c, where: "destination" });
   }
 
   // One weather lookup per (rounded) point, for its days' dates.
@@ -109,12 +120,36 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   for (const day of trip.itinerary) {
     for (const a of day.activities) {
       const o = extras.outdoor.get(a.id);
-      const list = o ? weatherWarnings(days[day.id], o.type) : [];
+      const w = days[day.id];
+      // A high destination centre (e.g. an island's mountains) doesn't stand
+      // for a coastal stop: no warnings from it. The chip still shows it, labelled.
+      const unrepresentative = w?.where === "destination" && (w.elevationM ?? 0) >= HIGH_POINT_M;
+      const list = o && !unrepresentative ? weatherWarnings(w, o.type) : [];
       if (list.length) warnings[a.id] = list;
     }
   }
 
-  return NextResponse.json({ days, warnings }, { headers: { "Cache-Control": "private, max-age=1800" } });
+  // Short browser cache, and none for an empty answer (a provider hiccup or a
+  // just-chosen plan shouldn't stick).
+  const empty = Object.keys(days).length === 0;
+  return NextResponse.json({ days, warnings }, { headers: { "Cache-Control": empty ? "no-store" : "private, max-age=300" } });
+}
+
+const HOTEL_MAX_KM = 60;
+/** Stops further apart than this aren't averaged: the midpoint could be sea or a ridge. */
+const SPREAD_KM = 25;
+
+/**
+ * Where a day's weather should be taken from its verified stops: their centre
+ * when they're close together; when they're spread out (a coastal dinner and
+ * a hike 100 km away), the outdoor stop -- where weather matters most -- else
+ * the first stop.
+ */
+function dayStopsPoint(points: Point[], outdoor: Point | undefined): Point | undefined {
+  const c = centroid(points);
+  if (!c) return undefined;
+  const spread = Math.max(...points.map((p) => distanceKm(c, p)));
+  return spread <= SPREAD_KM ? c : outdoor ?? points[0];
 }
 
 /** The chosen plan's hotel location, if the ratings lookup found it on Google. */

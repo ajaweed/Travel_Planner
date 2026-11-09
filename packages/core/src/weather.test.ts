@@ -24,17 +24,32 @@ beforeEach(() => resetWeatherCache());
 
 describe("weatherForDates", () => {
   it("forecast within the window, typical (averaged over past years) beyond it", async () => {
-    const a = api({ 2025: { highC: 30, lowC: 18, precipMm: 0 }, 2024: { highC: 26, lowC: 16, precipMm: 3 }, 2023: { highC: 28, lowC: 17, precipMm: 0 } });
+    // The most recent past years: June 2027 averages June 2026, 2025 and 2024.
+    const a = api({ 2026: { highC: 30, lowC: 18, precipMm: 0 }, 2025: { highC: 26, lowC: 16, precipMm: 3 }, 2024: { highC: 28, lowC: 17, precipMm: 0 } });
     const r = await weatherForDates(C, ["2026-11-10", "2027-06-15"], TODAY, a);
     expect(r.get("2026-11-10")).toMatchObject({ kind: "forecast", highC: 20, rainChancePct: 70 });
-    expect(r.get("2027-06-15")).toEqual({ date: "2027-06-15", kind: "typical", years: 3, highC: 28, lowC: 17, precipMm: 1, rainChancePct: 33 });
-    expect(a.dailyHistory).toHaveBeenCalledWith({ ...C, start: "2025-06-15", end: "2025-06-15" });
+    expect(r.get("2027-06-15")).toMatchObject({ date: "2027-06-15", kind: "typical", years: 3, highC: 28, lowC: 17, precipMm: 1, rainChancePct: 33 });
+    expect(a.dailyHistory).toHaveBeenCalledWith({ ...C, start: "2026-06-15", end: "2026-06-15" });
+  });
+
+  it("a trip over New Year keeps a forward range in each past year (review fix)", async () => {
+    const a = api({});
+    await weatherForDates(C, ["2027-12-30", "2028-01-02"], TODAY, a);
+    for (const [q] of a.dailyHistory.mock.calls as Array<[{ start: string; end: string }]>) expect(q.start < q.end).toBe(true);
+    expect(a.dailyHistory).toHaveBeenCalledWith({ ...C, start: "2025-12-30", end: "2026-01-02" });
+  });
+
+  it("dates whose forecast fails fall back to typical (review fix)", async () => {
+    const a = api({ 2025: { highC: 22, lowC: 15, precipMm: 0 } });
+    a.dailyForecast.mockImplementation(async () => ({ ok: false, reason: "PROVIDER_ERROR", message: "400", retryable: false }) as never);
+    const r = await weatherForDates(C, ["2026-11-10"], TODAY, a);
+    expect(r.get("2026-11-10")).toMatchObject({ kind: "typical", highC: 22 });
   });
 
   it("29 February maps to 28 February in other years", async () => {
-    const a = api({ 2025: { highC: 15, lowC: 8, precipMm: 0 } });
+    const a = api({ 2026: { highC: 15, lowC: 8, precipMm: 0 } });
     await weatherForDates(C, ["2028-02-29"], TODAY, a);
-    expect(a.dailyHistory).toHaveBeenCalledWith({ ...C, start: "2025-02-28", end: "2025-02-28" });
+    expect(a.dailyHistory).toHaveBeenCalledWith({ ...C, start: "2026-02-28", end: "2026-02-28" });
   });
 
   it("caches, and never throws", async () => {

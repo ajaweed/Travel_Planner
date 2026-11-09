@@ -27,7 +27,8 @@ describe("weather (Open-Meteo)", () => {
     expect(url).toContain("archive-api.open-meteo.com");
     expect(r).toEqual({ ok: true, data: [{ date: "2025-06-15", highC: undefined, lowC: undefined, precipMm: undefined, rainChancePct: undefined }] });
     vi.stubGlobal("fetch", vi.fn(async () => json({ reason: "out of range" }, 400)));
-    expect(await dailyHistory({ lat: 1, lon: 2, start: "x", end: "y" })).toEqual({ ok: false, reason: "NO_AVAILABILITY" });
+    // A rejected request is an error, not "no weather here" (review fix: it was being cached as an answer).
+    expect(await dailyHistory({ lat: 1, lon: 2, start: "x", end: "y" })).toMatchObject({ ok: false, reason: "PROVIDER_ERROR", retryable: false });
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
     expect(await dailyForecast({ lat: 1, lon: 2, start: "x", end: "y" })).toMatchObject({ ok: false, reason: "PROVIDER_ERROR" });
   });
