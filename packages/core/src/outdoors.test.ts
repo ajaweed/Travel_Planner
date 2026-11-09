@@ -113,6 +113,14 @@ describe("outdoor place names (Google check)", () => {
     expect(nameMatches(a, b, "Lisbon", OUTDOOR_SPEC.generic)).toBe(true);
   });
 
+  it("tries the whole name before dropping a ', ...' suffix (review fix)", () => {
+    expect(nameMatches("Mercado da Ribeira, Time Out Market", "Time Out Market Lisboa", "Lisbon")).toBe(true);
+  });
+
+  it("ignores a ', town' suffix (seen live)", () => {
+    expect(nameMatches("Queimadas, Santana", "Parque Florestal das Queimadas", "Madeira", OUTDOOR_SPEC.generic)).toBe(true);
+  });
+
   it("doesn't match on generic words alone", () => {
     expect(nameMatches("Arrábida Natural Park", "Sintra-Cascais Natural Park", "Lisbon", OUTDOOR_SPEC.generic)).toBe(false);
     expect(nameMatches("Praia da Ursa", "Praia do Guincho", "Lisbon", OUTDOOR_SPEC.generic)).toBe(false);
@@ -133,6 +141,12 @@ describe("outdoorView", () => {
     expect(v.links.map((l) => l.provider)).toEqual(["Google Maps", "Trail map"]);
     expect(v.links[0]!.url).toBe("https://maps.google.com/?cid=9");
     expect(v.trailNote).toMatch(/12 km; the plan says 5 km/);
+  });
+
+  it("about twice the mapped length: says it may include the walk back (seen live), still a note", () => {
+    expect(trailLengthNote(13, { status: "FOUND", name: "PR 9", lengthKm: 8.4, url: "u" })).toBe(
+      "OpenStreetMap maps this trail at 8.4 km; the plan's 13 km may include the walk back. Check before you go.",
+    );
   });
 
   it("no length note for long routes walked in sections, or close numbers", () => {

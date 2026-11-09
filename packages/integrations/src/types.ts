@@ -95,6 +95,8 @@ export type PlaceReviewSummary = {
   userRatingsTotal?: number;
   excerpts: PlaceReviewExcerpt[];
   googleMapsUri?: string;
+  /** Where Google puts it (for weather at the hotel, not the region's centre). */
+  location?: { lat: number; lon: number };
   source: "google_places";
 };
 

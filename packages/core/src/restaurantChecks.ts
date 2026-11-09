@@ -38,6 +38,8 @@ export type RestaurantCheck =
       rating?: number;
       userRatingsTotal?: number;
       googleMapsUri?: string;
+      /** Where Google puts it (used to take weather where the traveller actually is). */
+      location?: { lat: number; lon: number };
     }
   /** Google had nothing matching this name in this city. Not proof it doesn't exist. */
   | { status: "NOT_FOUND" };
@@ -88,6 +90,14 @@ const GENERIC = new Set(
  *   own -- otherwise any "Da Mario Italian Restaurant" would "verify" it.
  */
 export function nameMatches(requested: string, googleName: string, city?: string, generic: Set<string> = GENERIC): boolean {
+  // "Queimadas, Santana": the part after a comma is often a locality. Try the
+  // whole name first, so "Mercado da Ribeira, Time Out Market" still matches
+  // on the part after the comma.
+  const head = requested.split(",")[0]!.trim();
+  return matchesName(requested, googleName, city, generic) || (!!head && head !== requested.trim() && matchesName(head, googleName, city, generic));
+}
+
+function matchesName(requested: string, googleName: string, city: string | undefined, generic: Set<string>): boolean {
   const cityWords = city ? tokens(city) : [];
   const notCity = (t: string) => !cityWords.some((c) => sameWord(t, c));
   const req = tokens(requested).filter(notCity);
@@ -144,6 +154,7 @@ function toCheck(place: RestaurantPlace): RestaurantCheck {
     rating: place.rating,
     userRatingsTotal: place.userRatingsTotal,
     googleMapsUri: isGoogleMapsUrl(place.googleMapsUri) ? place.googleMapsUri : undefined,
+    location: place.location,
   };
 }
 
@@ -193,7 +204,7 @@ const OUTDOOR_GENERIC = new Set(
     "trail trilho sendero sentiero path route rota ruta walk hike loop circuit trailhead area " +
     "mount mountain mountains monte montes serra sierra peak pico summit hill hills " +
     "beach praia playa spiaggia lake lago lagoa river rio falls waterfall cascata cascada " +
-    "viewpoint miradouro mirador belvedere forest floresta bosque woods garden gardens jardim botanical " +
+    "viewpoint miradouro mirador belvedere forest floresta florestal forestal bosque woods garden gardens jardim botanical " +
     "valley vale canyon gorge cave caves gruta island ilha isla coast costa cliff cliffs bay baia " +
     "the and"
   ).split(" "),

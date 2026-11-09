@@ -289,14 +289,19 @@ Rules:
 // the traveller than losing a whole option.
 const MAX_ATTEMPTS = 2;
 
+/**
+ * @param climate optional typical/forecast weather lines for the trip's dates
+ *   (see weather.ts climateSummary), so outdoor plans suit the season.
+ */
 export async function runItineraryAgent(
   brief: TripBrief,
   variant: ItineraryVariant,
+  climate?: string,
 ): Promise<ItineraryOptionDraft> {
   let lastError: Error | undefined;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      return await attemptItinerary(brief, variant);
+      return await attemptItinerary(brief, variant, climate);
     } catch (err) {
       if (!(err instanceof InvalidItineraryError)) throw err; // API/network errors: no blind retry
       lastError = err;
@@ -308,7 +313,7 @@ export async function runItineraryAgent(
 
 class InvalidItineraryError extends Error {}
 
-async function attemptItinerary(brief: TripBrief, variant: ItineraryVariant): Promise<ItineraryOptionDraft> {
+async function attemptItinerary(brief: TripBrief, variant: ItineraryVariant, climate?: string): Promise<ItineraryOptionDraft> {
   const client = getClaudeClient();
 
   const res = await client.messages.create({
@@ -324,7 +329,12 @@ async function attemptItinerary(brief: TripBrief, variant: ItineraryVariant): Pr
     messages: [
       {
         role: "user",
-        content: `Today's date: ${todayISO()}\n\nTripBrief:\n${JSON.stringify(brief)}\n\nFraming for this option:\n${variant.framing}`,
+        content:
+          `Today's date: ${todayISO()}\n\nTripBrief:\n${JSON.stringify(brief)}` +
+          (climate
+            ? `\n\nWeather for these dates (plan around it: outdoor plans for drier, cooler times; indoor backups on wet days; early starts in heat):\n${climate}`
+            : "") +
+          `\n\nFraming for this option:\n${variant.framing}`,
       },
     ],
   });

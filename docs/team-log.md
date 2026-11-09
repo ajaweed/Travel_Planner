@@ -742,3 +742,36 @@ restaurant checker, generalised); trail lengths from OpenStreetMap via Waymarked
 - architecture.md: findRestaurant -> findPlace.
 Tests: 277 core + 20 integrations; typecheck and build pass. Test trip: cmw8hs9nh... (Madeira).
 Merged to `main` and pushed. Reviewed by `/code-review`.
+
+**2026-11-08 -- integrations-dev** -- `integrations-dev/weather` (part 2 of hikes/nature).
+- Open-Meteo (free, no key; non-commercial terms noted in going-live.md): each itinerary day
+  gets a forecast (within the 16-day window) or what's typical for the date (the most recent
+  3 past years, averaged), always labelled as which. Outdoor stops get heat / rain / freezing
+  / cold-water warnings, worded "usually" / "often" for typical days.
+- The itinerary agent gets one climate line per destination before drafting (capped at 6 s,
+  run in parallel, never blocks planning).
+- Live run 1 exposed a real problem: a region's centre can be a mountain. Madeira's centre
+  (~1,000 m) gave "15°C, rain 5 of 6 days" for May. So weather is now taken where the
+  traveller is: the centre of the day's Google-verified stops (the outdoor stop if they're
+  spread out), else the hotel (if near the destination), else the destination with its
+  elevation shown. Place and hotel lookups now keep coordinates for this. The climate line
+  says when the point is high.
+- Live run 2 (Madeira hikers, Nov 16-20): real forecasts at each day's stops (21° at 239 m in
+  Funchal, 17° at 1,171 m on the mountain day). It also found: out-and-back walks (~2x the
+  mapped length) now get a "may include the walk back" note; "Place, Town" names now match.
+`/code-review` (medium) raised 10 findings; all fixed:
+- Trips over New Year sent inverted archive ranges: all dates now shift by the same number
+  of years (the smallest that's safely archived).
+- HTTP 400 was cached as "no weather": it's an error now, and not cached.
+- Forecast window: a day's margin, and dates whose forecast fails fall back to typical.
+- Browser cache 5 minutes, and no-store when empty.
+- The hotel point is only used when it's within 60 km of the destination (its lookup is
+  Google's unverified first guess).
+- Spread-out stops aren't averaged (no midpoint in the sea); the outdoor stop is used instead.
+- Travel-only days carry the previous day's city.
+- Out-and-back note kept but reworded (not silenced).
+- Name matching tries the whole name before dropping a ", ..." suffix.
+- climateSummary in parallel, timer cleared.
+- Also: no outdoor warnings from a high destination-centre reading (the chip stays, labelled).
+Tests: 290 core + 22 integrations; typecheck and build pass. Test trip: cmw8ihopx...
+(Madeira hikers). Merged to `main` and pushed. Reviewed by `/code-review`.
